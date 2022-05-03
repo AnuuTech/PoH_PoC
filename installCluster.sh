@@ -158,6 +158,7 @@ if (( $init_cluster == 1 )); then
 		key=$((python3 ii_helper.py access.bin 2) 2>&1)
 		rabbitmqctl add_user L1_node $key
 		rabbitmqctl set_permissions -p "anuutech" L1_node "" "L1_intra*|L2_L1_*" "L1_intra*|L2_L1_*"
+		rabbitmqctl set_user_tags L1_node monitoring
 	fi
 	#FOR LEVEL 2
 	if [ $nodelevel == 'L2' ]; then
@@ -165,6 +166,7 @@ if (( $init_cluster == 1 )); then
 		key=$((python3 ii_helper.py access.bin 3) 2>&1)
 		rabbitmqctl add_user L2_node $key
 		rabbitmqctl set_permissions -p "anuutech" L2_node "" "L2_intra*|L2_L1_*" "L2_intra*|L2_L1_*"
+		rabbitmqctl set_user_tags L2_node monitoring
 		#L1ext node
 		key=$((python3 ii_helper.py access.bin 5) 2>&1)
 		rabbitmqctl add_user L1ext_node $key
@@ -180,6 +182,7 @@ if (( $init_cluster == 1 )); then
 		key=$((python3 ii_helper.py access.bin 4) 2>&1)
 		rabbitmqctl add_user L3_node $key
 		rabbitmqctl set_permissions -p "anuutech" L3_node "" "L3_intra*|L3_L2_*|L3_client_*" "L3_intra*|L3_L2_*|L3_client_*"
+		rabbitmqctl set_user_tags L3_node monitoring
 		#L2ext node
 		key=$((python3 ii_helper.py access.bin 6) 2>&1)
 		rabbitmqctl add_user L2ext_node $key

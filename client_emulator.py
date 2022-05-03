@@ -369,8 +369,6 @@ def initmsg():
     "initial_sender": Client_ID,
     "final_receiver": "",
     "type": "",
-    "tasks_todo":[],
-    "tasks_done":[],
     "content": ""
     }
     return msg_empty
@@ -402,7 +400,7 @@ def getL3nodesList():
                 channel2=connection2.channel()
                 msg=initmsg()
                 msg['uid']= '-1'
-                msg['type']='L3NLISTREQ'
+                msg['type']='getnodeslist'
                 msg['content']="config msg from " + hostname
                 channel2.basic_publish(exchange='', routing_key='laylocal_client_Tx', body=(json.dumps(msg)))
                 print("msg sent: " + msg['type']+ msg['content'] + " "+ msg['uid'])
@@ -423,7 +421,7 @@ def getL3nodesList():
 def configmsgconsumer(ch, method, properties, body):
     global IPs
     msg=json.loads(body.decode("utf-8"))
-    if (msg['type']=='L3NLISTNOW' and msg['final_receiver']==queue_name):
+    if (msg['type']=='getnodeslist' and msg['final_receiver']==queue_name):
         temp=msg['content'].split(',')
         IPs=temp[1:len(temp)]
     ch.basic_ack(delivery_tag = method.delivery_tag)
