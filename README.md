@@ -4,7 +4,7 @@ Initial network solution using RabbitMQ.
 
 
 ### CLIENT SIDE / TESTING THE NETWORK FEATURES
-You can test the network using the client_emulator.py python application.
+You can test the different features of the network using the client_basic.py python application.
 1. Type "Python3 client_basic.py" in a command line where the file is present
 2. Wait until a list of nodes is collected from the network (up to 20 seconds)
 3. Click "Connect"
@@ -17,8 +17,8 @@ You can test the network using the client_emulator.py python application.
 10. Click "QUIT"
 
 
-### CLIENT SIDE / STRESS TESING
-You can test the network using the client_emulator.py python application.
+### CLIENT SIDE / STRESS TESTING
+You can stress test the network using the client_stresstest.py python application.
 1. Type "Python3 client_stresstest.py" in a command line where the file is present
 2. Select one cluster node
 3. Click "Connect"
