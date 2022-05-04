@@ -186,7 +186,7 @@ class NodeConsumer(object):
         """
         LOGGER.debug('Issuing consumer related RPC commands')
         self.add_on_cancel_callback()
-        qname='%s_intralayer_queue' %self._nodelevel
+        qname='%s_main_queue' %self._nodelevel
         self._consumer_tag = self._channel.basic_consume(
             qname, self.on_message)
         self.was_consuming = True
@@ -324,7 +324,6 @@ class ReconnectingNodeConsumer(object):
         self._defaultnodes=[]
         self._nodeslist=[]
         self._uid=''
-        self._oip=''
         self._msgs_to_send = []
         self._first_init = True
         self._sending = False
@@ -338,10 +337,7 @@ class ReconnectingNodeConsumer(object):
         LOGGER.info("Node has started\n")
         
 
-    def run(self):
-        #get own IP
-        self._oip = requests.get('https://api.ipify.org').text
-        
+    def run(self):        
         #get default nodes in the cluster
         defaultnodes_hosts=['at-cluster'+self._nodelevel+ii_helper('access.bin', '8'),
                       'at-cluster'+self._nodelevel+'b'+ii_helper('access.bin', '8')]
@@ -354,7 +350,7 @@ class ReconnectingNodeConsumer(object):
                 logmsg=str("Impossible to get one of the default node: " + dch) + str(sys.exc_info()[0])
                 LOGGER.warning(logmsg)
 
-        #node name creation from uid
+        #node name read from uid
         if os.path.isfile(self.UID_PATH):
             with open(self.UID_PATH, 'r') as uid_file:
                 self._uid=uid_file.read()
@@ -364,7 +360,7 @@ class ReconnectingNodeConsumer(object):
 
         #First initialisation of node
         self._initnode()
-        self._consumer = NodeConsumer(self._pikaconn_parameters, self._nodelevel, self._Node_consumer)
+        self._consumer = NodeConsumer(self._pikaconn_parameters, self._nodelevel, self._node_consumer)
         
         # Start sending_msg thread on a separate connection
         self._threadsend = Thread(target=self._sending_msg)
@@ -389,7 +385,7 @@ class ReconnectingNodeConsumer(object):
             time.sleep(reconnect_delay)
             # Re-init node, redefine consumer and restart sending thread
             self._initnode()
-            self._consumer = NodeConsumer(self._pikaconn_parameters, self._nodelevel, self._Node_consumer)
+            self._consumer = NodeConsumer(self._pikaconn_parameters, self._nodelevel, self._node_consumer)
             self._threadsend = Thread(target=self._sending_msg)
             self._threadsend.start()
 
@@ -434,16 +430,6 @@ class ReconnectingNodeConsumer(object):
 
         LOGGER.info("The list of nodes in the cluster has been updated: " + str(self._nodeslist))
 
-    def _initmsg(self):
-        msg_empty = {
-        "uid": "0",
-        "initial_sender": self._uid,
-        "final_receiver": "",
-        "type": "",
-        "content": "something"
-        }
-        return msg_empty
-
     def _ticking(self):
         if not self._first_init:
             self._update_nodeslist()
@@ -454,26 +440,30 @@ class ReconnectingNodeConsumer(object):
         t.start()
 
     # Consumer method
-    def _Node_consumer(self, ch, method, properties, body):
+    def _node_consumer(self, ch, method, properties, body):
         try:
             msg=json.loads(body.decode("utf-8"))
             LOGGER.info("Received decode: " + str(msg))
             msgback=msg
+            hdrs=properties.headers
+            LOGGER.debug(hdrs)
             
-            if (msg['type']=='HMES'):
+            if (hdrs.get('type')=='HMES'):
                 #time.sleep(0.1)
+                hdrs['dest']=hdrs.get('sender')
                 msgback['content']='Hashing '+str(msg['content'])+' with ' + str(self._uid)
                 LOGGER.info("HMES will send back: " +str(msgback))
-                self._msgs_to_send.append(msgback)
-            elif (msg['type'] == 'getnodeslist'):
+                self._msgs_to_send.append([msgback, hdrs])
+            elif (hdrs.get('type') == ('get'+str(self._nodelevel)+'nodeslist')):
                 nl_msg=""
                 for node in self._nodeslist:
                     nl_msg=nl_msg+","+node
-                msgback['nodeslist']=nl_msg
-                LOGGER.info("will send: getnodeslist with " + str(msgback))
-                self._msgs_to_send.append(msgback)
+                msgback['content']=nl_msg
+                LOGGER.info("will send: get"+str(self._nodelevel)+"nodeslist with " + str(msgback))
+                hdrs['dest']=hdrs.get('sender')
+                self._msgs_to_send.append([msgback, hdrs])
             else:
-                LOGGER.error("ERROR: unknown message type" + msg['type'])
+                LOGGER.error("ERROR: unknown message type" + hdrs.get('type'))
             return True
         except:
             e = sys.exc_info()[1]
@@ -501,30 +491,49 @@ class ReconnectingNodeConsumer(object):
         while self._sending:
             try:
                 if len(self._msgs_to_send)>0:
-                    msg=self._msgs_to_send.pop(0)
+                    msg, hdrs =self._msgs_to_send.pop(0)
                     LOGGER.debug(str(msg))
-
+                    LOGGER.debug(str(hdrs))
+                    new_hdrs={}
+                    # below is needed for Headers exchange to work correctly
+                    if (hdrs.get('dest') != None):
+                        new_hdrs['dest']=hdrs.get('dest')
+                    if (hdrs.get('type') != None):
+                        new_hdrs['type']=hdrs.get('type')
+                    if (hdrs.get('sender') != None):
+                        new_hdrs['sender']=hdrs.get('sender')
+                    if (hdrs.get('dest_all') != None):
+                        new_hdrs['dest_all']=hdrs.get('dest_all')
+                         
                     # messages to reply queue
                     if self._nodelevel == 'L3':
-                        if (msg['type'] == 'getnodeslist'):
-                            #sends back to clients using CHAT type TODO add a new binding!
-                            sendingchan.basic_publish(exchange='L3_client_exchange', routing_key='CHAT',
-                                              body=(json.dumps(msg)))
-                        if (msg['type'] == 'HMES'):
-                            #sends to lower layer for next steps
-                            sendingchan.basic_publish(exchange='L3_L2_exchange', routing_key='toL2',
-                                              body=(json.dumps(msg)))
+                        if (hdrs.get('type') == 'getL3nodeslist' or hdrs.get('type') == 'HMES'):
+                            #sends back to client
+                            sendingchan.basic_publish(exchange='L3_main_exchange', routing_key='all',
+                                              properties=pika.BasicProperties(
+                                                  headers=new_hdrs), body=(json.dumps(msg)))
                     elif self._nodelevel == 'L2':
-                        if (msg['type'] == 'HMES'):
-                            #sends to lower layer for next steps
-                            sendingchan.basic_publish(exchange='L2_L1_exchange', routing_key='toL1',
-                                              body=(json.dumps(msg)))
+                        if (hdrs.get('type') == 'getL2nodeslisttoL3'):
+                            #sends back to L3 initial sender TODO implement connection to L3
+                            pass
+##                            sendingchan.basic_publish(exchange='L3_main_exchange', routing_key='all',
+##                                              properties=pika.BasicProperties(
+##                                                  headers=new_hdrs), body=(json.dumps(msg)))
+                        if (hdrs.get('type') == 'getL2nodeslisttoL1'):
+                            pass
+                            #sends back to L1 initial sender TODO implement connection to L1
+##                            sendingchan.basic_publish(exchange='L1_main_exchange', routing_key='all',
+##                                              properties=pika.BasicProperties(
+##                                                  headers=new_hdrs), body=(json.dumps(msg)))
                     elif self._nodelevel == 'L1':
-                        if (msg['type'] == 'HMES'):
-                            #sends to blockchain
-                            LOGGER.info(str("msg now ready for being on stored on blockchain!!!!TODO"))
+                        if (hdrs.get('type') == 'getL1nodeslisttoL2'):
+                            pass
+                            #sends back to L3 initial sender TODO implement connection to L2
+##                            sendingchan.basic_publish(exchange='L2_main_exchange', routing_key='all',
+##                                              properties=pika.BasicProperties(
+##                                                  headers=new_hdrs), body=(json.dumps(msg)))
 
-                    LOGGER.info(str("msg sent to reply queue: " + msg['type']))
+                    LOGGER.info(str("msg sent to reply queue: " + hdrs.get('type')))
                 else:
                     sendingconn.sleep(0.1) # ensure heartbeat
             except:
@@ -555,7 +564,7 @@ class ReconnectingNodeConsumer(object):
 
 def main():
     hdlr = logging.StreamHandler()
-    fhdlr = logging.FileHandler("logmsg.txt", mode='w')
+    fhdlr = logging.FileHandler("log_node.txt", mode='w')
     format = logging.Formatter('%(asctime)-15s %(levelname)s : %(message)s')
     fhdlr.setFormatter(format)
     hdlr.setFormatter(format)

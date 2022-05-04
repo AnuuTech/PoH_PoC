@@ -123,7 +123,7 @@ class App:
         self.check2 = tkinter.Checkbutton(frame, text="HMES", variable=self.varC2)
         self.check2.pack()
 
-        w8 = tkinter.Label(frame, text="Client Name: "+Client_ID)
+        w8 = tkinter.Label(frame, text="Client Name: "+client_ID)
         w8.pack(side = tkinter.TOP, anchor = tkinter.W)
        
         vcmd2 = (frame.register(self.callbackE2))
@@ -228,11 +228,12 @@ def keepconnection():
             parameters=pika.ConnectionParameters(IP_sel, port,virtual_host, credentials, heartbeat=61)
             connection = pika.BlockingConnection(parameters)
             channel=connection.channel()
-            #channel.queue_declare(queue=queue_name, durable=True, arguments={"x-queue-type": "quorum"})
-            #channel.queue_bind(exchange='laylocal_exchange', queue=queue_name, routing_key='all')
+            channel.queue_declare(queue=client_ID, auto_delete=True)
+            channel.queue_bind(exchange='L3_main_exchange', queue=client_ID, routing_key='all',
+                               arguments={'x-match': 'any', 'dest': client_ID, 'dest_all': 'clients'})
 
             channel.basic_qos(prefetch_count=100)           
-            channel.basic_consume(queue=queue_name, on_message_callback=msgconsumer)
+            channel.basic_consume(queue=client_ID, on_message_callback=msgconsumer)
             tempstr="Connected to " + IP_sel
             mlist.insert(0,tempstr)
             channel.start_consuming()
@@ -280,15 +281,16 @@ def stop_send():
 
 def msgconsumer(ch, method, properties, body):
     global i2, timest_in, timest_i2, old_speed2
+    hdrs=properties.headers
     #msg=str(body,'utf-8') only works in Python 3
     msg= json.loads(body.decode("utf-8"))
     #print(msg)
-    if app.varC1.get() and msg['type']=='CHAT':
+    if app.varC1.get() and hdrs.get('type')=='CHAT':
         i2 += 1
         print("CHAT "+msg['uid']+" Received " + msg['content'])
-    if msg['type']=='HMES' and msg['initial_sender']==queue_name:
+    if hdrs.get('type')=='HMES' and msg['initial_sender']==client_ID:
         i2 += 1
-        print("HMES "+msg['uid']+" Received " + str(msg['tasks_done']))
+        print("HMES "+msg['uid']+" Received "+msg['content'])
     # Receiving speed calculation
     time_st_now=time.time()
     if (time_st_now >= timest_in + 0.1):
@@ -313,20 +315,22 @@ def sending_msg():
     while sending:
         try:
             isent=0
-            
+            headers={'dest': client_ID, 'type': 'CHAT', 'sender': client_ID}
             if app.varC1.get():
                 msg['uid']= str(i)
-                msg['type']='CHAT'
-                msg['content']="msg from " + Client_ID
-                channel2.basic_publish(exchange='L3_client_exchange', routing_key='CHAT', body=(json.dumps(msg)))
-                print("msg sent: " + msg['type']+ msg['content'] + " "+ msg['uid'])
+                headers={'dest': client_ID, 'type': 'CHAT', 'sender': client_ID}
+                msg['content']="msg from " + client_ID
+                channel2.basic_publish(exchange='L3_main_exchange', routing_key='all',
+                                       properties=pika.BasicProperties(headers=headers),body=(json.dumps(msg)))
+                print("msg sent: CHAT " + msg['content'] + " "+ msg['uid'])
                 isent += 1
             if app.varC2.get():
                 msg['uid']= str(i)
-                msg['type']='HMES'
-                msg['content']="hash msg from " + Client_ID
-                channel2.basic_publish(exchange='L3_client_exchange', routing_key='HMES', body=(json.dumps(msg)))
-                print("msg sent: " + msg['type']+ msg['content'] + " "+ msg['uid'])
+                headers={'dest': 'main', 'type': 'HMES', 'sender': client_ID}
+                msg['content']="hash msg from " + client_ID
+                channel2.basic_publish(exchange='L3_main_exchange', routing_key='all',
+                                       properties=pika.BasicProperties(headers=headers), body=(json.dumps(msg)))
+                print("msg sent: HMES" + msg['content'] + " "+ msg['uid'])
                 isent += 1
             if isent>0:
                 # Real sending speed calculation
@@ -366,7 +370,7 @@ def sending_msg():
 def initmsg():
     msg_empty = {
     "uid": '0',
-    "initial_sender": Client_ID,
+    "initial_sender": client_ID,
     "final_receiver": "",
     "type": "",
     "content": ""
@@ -391,8 +395,8 @@ def getL3nodesList():
                 connection = pika.BlockingConnection(parameters)
                 connection2 = pika.BlockingConnection(parameters)
                 channel=connection.channel()
-                channel.queue_declare(queue=queue_name, auto_delete=True)
-                channel.queue_bind(exchange='laylocal_exchange', queue=queue_name, routing_key='all')
+                channel.queue_declare(queue=client_ID, auto_delete=True)
+                channel.queue_bind(exchange='laylocal_exchange', queue=client_ID, routing_key='all')
                 t2 = threading.Thread(target=configconsumer)
                 t2.start()
                 threads.append(t2)
@@ -421,14 +425,14 @@ def getL3nodesList():
 def configmsgconsumer(ch, method, properties, body):
     global IPs
     msg=json.loads(body.decode("utf-8"))
-    if (msg['type']=='getnodeslist' and msg['final_receiver']==queue_name):
+    if (msg['type']=='getnodeslist' and msg['final_receiver']==client_ID):
         temp=msg['content'].split(',')
         IPs=temp[1:len(temp)]
     ch.basic_ack(delivery_tag = method.delivery_tag)
 
 def configconsumer():
     global channel
-    channel.basic_consume(queue=queue_name, on_message_callback=configmsgconsumer)
+    channel.basic_consume(queue=client_ID, on_message_callback=configmsgconsumer)
     try:
         channel.start_consuming()
     except:
@@ -463,9 +467,8 @@ def cleanall():
 
 #MAIN CALL
 #CLIENT ID
-Client_ID=str(hostname+randomstring(4))
-#print(Client_ID)
-queue_name="L3_client_queue"
+client_ID=str('client_'+randomstring(4))
+#print(client_ID)
 lay_pass=ii_helper('access.bin', '1')
 app=App(root)
 label_IR.set("NaN")

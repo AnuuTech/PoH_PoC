@@ -102,7 +102,7 @@ apt-get install -y erlang-base \
 
 ## Set the erlang cookie TODO change for each cluster level
 mkdir /var/lib/rabbitmq
-key=$((python3 ii_helper.py access.bin 4) 2>&1) 
+key=$((python3 ii_helper.py access.bin 9) 2>&1) 
 echo $key > '/var/lib/rabbitmq/.erlang.cookie'
 unset key
 chmod 400 /var/lib/rabbitmq/.erlang.cookie
@@ -157,36 +157,44 @@ if (( $init_cluster == 1 )); then
 		#L1 node
 		key=$((python3 ii_helper.py access.bin 2) 2>&1)
 		rabbitmqctl add_user L1_node $key
-		rabbitmqctl set_permissions -p "anuutech" L1_node "" "L1_intra*|L2_L1_*" "L1_intra*|L2_L1_*"
+		rabbitmqctl set_permissions -p "anuutech" L1_node "" "L1_main_exchange" "L1_main_queue|L1_own_queue"
 		rabbitmqctl set_user_tags L1_node monitoring
+		#L2ext node
+		key=$((python3 ii_helper.py access.bin 6) 2>&1)
+		rabbitmqctl add_user L2ext_node $key
+		rabbitmqctl set_permissions -p "anuutech" L2ext_node "" "L1_main_exchange" ""
 	fi
 	#FOR LEVEL 2
 	if [ $nodelevel == 'L2' ]; then
 		#L2 node
 		key=$((python3 ii_helper.py access.bin 3) 2>&1)
 		rabbitmqctl add_user L2_node $key
-		rabbitmqctl set_permissions -p "anuutech" L2_node "" "L2_intra*|L2_L1_*" "L2_intra*|L2_L1_*"
+		rabbitmqctl set_permissions -p "anuutech" L2_node "" "L2_main_exchange" "L2_main_queue|L2_own_queue"
 		rabbitmqctl set_user_tags L2_node monitoring
 		#L1ext node
 		key=$((python3 ii_helper.py access.bin 5) 2>&1)
 		rabbitmqctl add_user L1ext_node $key
-		rabbitmqctl set_permissions -p "anuutech" L1ext_node "" "L2_L1_*" "L2_L1_*"
+		rabbitmqctl set_permissions -p "anuutech" L1ext_node "" "L2_main_exchange" ""
+		#L3ext node
+		key=$((python3 ii_helper.py access.bin 7) 2>&1)
+		rabbitmqctl add_user L3ext_node $key
+		rabbitmqctl set_permissions -p "anuutech" L3ext_node "" "L2_main_exchange" ""
 	fi
 	#FOR LEVEL 3
 	if [ $nodelevel == 'L3' ]; then
 		#client user
 		key=$((python3 ii_helper.py access.bin 1) 2>&1)
 		rabbitmqctl add_user client_user $key
-		rabbitmqctl set_permissions -p "anuutech" client_user "" "L3_client_*" "L3_client_*"
+		rabbitmqctl set_permissions -p "anuutech" client_user "client_*" "L3_main_exchange|client_*" "L3_main_exchange|client_*"
 		#L3 node
 		key=$((python3 ii_helper.py access.bin 4) 2>&1)
 		rabbitmqctl add_user L3_node $key
-		rabbitmqctl set_permissions -p "anuutech" L3_node "" "L3_intra*|L3_L2_*|L3_client_*" "L3_intra*|L3_L2_*|L3_client_*"
+		rabbitmqctl set_permissions -p "anuutech" L3_node "" "L3_main_exchange" "L3_main_queue|L3_own_queue"
 		rabbitmqctl set_user_tags L3_node monitoring
 		#L2ext node
 		key=$((python3 ii_helper.py access.bin 6) 2>&1)
 		rabbitmqctl add_user L2ext_node $key
-		rabbitmqctl set_permissions -p "anuutech" L2ext_node "" "L3_L2_*" "L3_L2_*"
+		rabbitmqctl set_permissions -p "anuutech" L2ext_node "" "L3_main_exchange" ""
 	fi
 	unset key
 	
@@ -198,7 +206,7 @@ fi
 ## Start file
 rm start_node.sh
 cat >>start_node.sh <<EOF
-nohup python3 -u /home/cluster_node.py > /home/output.log &
+nohup python3 -u /home/cluster_node.py $nodelevel > /home/output.log &
 echo \$! > python_pid.file
 EOF
 chmod +x start_node.sh
