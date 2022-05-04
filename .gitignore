@@ -1,2 +1,5 @@
 access.bin
-logmsg.txt
+log*
+atclient_privkey.file
+atclient_pubkey.file
+client_uid.file

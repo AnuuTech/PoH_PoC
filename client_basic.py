@@ -206,7 +206,7 @@ class App:
         
         frame.pack()
 
-        tempstr="Successfully got list of "+str(len(IPs))+" L3 nodes of AnuuTech Network!"
+        tempstr="Current list of "+str(len(IPs))+" L3 nodes of AnuuTech Network."
         mlist.insert(0,tempstr)
         
 

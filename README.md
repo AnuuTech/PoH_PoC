@@ -3,17 +3,32 @@
 Initial network solution using RabbitMQ.
 
 
-### CLIENT SIDE / TESTING THE NETWORK
+### CLIENT SIDE / TESTING THE NETWORK FEATURES
 You can test the network using the client_emulator.py python application.
-1. Type "Python3 client_emulator.py" in a command line where the file is present
+1. Type "Python3 client_basic.py" in a command line where the file is present
+2. Wait until a list of nodes is collected from the network (up to 20 seconds)
+3. Click "Connect"
+4. Edit your name and the AnuuChat message to send OR select HMES
+5. Click "Send msg", it will send one message
+6. Check on the command window that message is correctly received back.
+7. Alternatively edit the AnuuChat recipient with the unique identifier of another client
+8. Click "Send msg" and checks that recipient received the decrypted message
+9. Click "Disconnect"
+10. Click "QUIT"
+
+
+### CLIENT SIDE / STRESS TESING
+You can test the network using the client_emulator.py python application.
+1. Type "Python3 client_stresstest.py" in a command line where the file is present
 2. Select one cluster node
 3. Click "Connect"
 4. Choose the number of messages per second to send (1 to 100).
-5. Click "Send msg"
-6. Check on the command window that messages are correctly received back.
-7. Then click "Stop Sending"
-8. Click "Disconnect"
-9. Click "QUIT"
+5. Select CHAT or HMES depending on what to test
+6. Click "Send msg", it will start continuously sending messages
+7. Check on the command window that messages are correctly received back.
+8. Then click "Stop Sending"
+9. Click "Disconnect"
+10. Click "QUIT"
 
 
 ### SERVER SIDE / ADDING A NODE TO THE NETWORK

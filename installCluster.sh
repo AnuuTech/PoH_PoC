@@ -214,7 +214,6 @@ chmod +x start_node.sh
 ## Stop file
 rm stop_node.sh
 cat >>stop_node.sh <<EOF
-rm /home/running.file
 pid=\$(cat python_pid.file)
 kill -SIGINT \$pid
 echo python process \$pid stopping...
