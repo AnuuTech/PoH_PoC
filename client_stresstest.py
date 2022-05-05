@@ -70,7 +70,7 @@ class App:
     def __init__(self, wind):
         global varGr, mlist, label_IR, label_OR, IPs, IP_sel
         frame = tkinter.Frame(wind)
-        IPs=defaultL3nodes #getL3nodesList()
+        IPs=defaultL3nodes
         
         w2 = tkinter.Label(frame, text="Outgoing rate goal [/s] (0 for max):")
         w2.pack(side = tkinter.TOP, anchor = tkinter.W)
@@ -196,7 +196,7 @@ class App:
 
                                
 root = tkinter.Tk()
-root.title("AnuuTech Msg emulator")
+root.title("AnuuTech Client Stress Test")
 
 def randomstring(stringLength):
     letters = string.ascii_letters
@@ -376,68 +376,6 @@ def initmsg():
     "content": ""
     }
     return msg_empty
-            
-def getL3nodesList():
-    global connection, connection2, channel, channel2, IPs, threads
-    timestamp_config=time.time()
-    waiting=False
-    while len(IPs)==0:
-        if (time.time()-timestamp_config > 30):
-            print( "ERROR: impossible to get L3nodes list, timeout")
-            break
-        if waiting == False:
-            try:
-                # Random selection of a L3nodes node
-                random.shuffle(defaultL3nodes)
-                # Start connection
-                credentials = pika.PlainCredentials(lay_user,lay_pass)
-                parameters=pika.ConnectionParameters(defaultL3nodes[0], port,virtual_host, credentials)
-                connection = pika.BlockingConnection(parameters)
-                connection2 = pika.BlockingConnection(parameters)
-                channel=connection.channel()
-                channel.queue_declare(queue=client_ID, auto_delete=True)
-                channel.queue_bind(exchange='laylocal_exchange', queue=client_ID, routing_key='all')
-                t2 = threading.Thread(target=configconsumer)
-                t2.start()
-                threads.append(t2)
-                
-                channel2=connection2.channel()
-                msg=initmsg()
-                msg['uid']= '-1'
-                msg['type']='getnodeslist'
-                msg['content']="config msg from " + hostname
-                channel2.basic_publish(exchange='', routing_key='laylocal_client_Tx', body=(json.dumps(msg)))
-                print("msg sent: " + msg['type']+ msg['content'] + " "+ msg['uid'])
-                print("L3nodes list request sent to " + defaultL3nodes[0])
-                waiting = True
-                time.sleep(2)
-            except FileNotFoundError:
-                waiting=False
-                e = sys.exc_info()[0]
-                print( "Problem requesting L3nodes list, retrying: %s" % e )
-                print(e)
-                cleanall()
-                
-
-    print( "List of L3nodes obtained: %s" %IPs )
-    cleanall()
-
-def configmsgconsumer(ch, method, properties, body):
-    global IPs
-    msg=json.loads(body.decode("utf-8"))
-    if (msg['type']=='getnodeslist' and msg['final_receiver']==client_ID):
-        temp=msg['content'].split(',')
-        IPs=temp[1:len(temp)]
-    ch.basic_ack(delivery_tag = method.delivery_tag)
-
-def configconsumer():
-    global channel
-    channel.basic_consume(queue=client_ID, on_message_callback=configmsgconsumer)
-    try:
-        channel.start_consuming()
-    except:
-        e = sys.exc_info()[0]
-        print( "<p>Problem while configconsuming: %s</p>" % e )
      
 def cleanall():
     # clean all connections
