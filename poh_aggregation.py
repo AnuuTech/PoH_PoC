@@ -17,6 +17,8 @@ from Crypto.Signature.pkcs1_15 import PKCS115_SigScheme
 from Crypto.Hash import SHA256
 import binascii
 import pymongo
+import psutil
+import platform
 import urllib
 import signal
 signal.signal(signal.SIGINT, signal.default_int_handler) # to ensure Signal to be received
@@ -369,7 +371,7 @@ class ReconnectingNodeConsumer(object):
         #node name read from uid
         if os.path.isfile(self.UID_PATH):
             with open(self.UID_PATH, 'r') as uid_file:
-                self._uid=uid_file.read()
+                self._uid=uid_file.read().strip()
       
         #start the regular ticking
         self._ticking() # will init a ticking dameon
@@ -419,7 +421,7 @@ class ReconnectingNodeConsumer(object):
         credentials = pika.PlainCredentials(self._node_user, self._np)
         self._pikaconn_parameters = pika.ConnectionParameters('localhost', self.PORT, self.VHOST, credentials,
                                                               heartbeat=10)
-
+       
         # Ensure local queue exists
         connectiontemp = pika.BlockingConnection(self._pikaconn_parameters)
         channeltemp=connectiontemp.channel()
@@ -427,26 +429,10 @@ class ReconnectingNodeConsumer(object):
         channeltemp.queue_declare(queue=qname, auto_delete=False)
         channeltemp.queue_bind(exchange=(self._nodelevel+'_main_exchange'), queue=qname, routing_key='all',
                        arguments={'x-match': 'any', 'dest': self._uid, 'dest_all': 'nodes'})
-
-
-        # Create/Update public key on AnuuTechDB
-        # Prepare connection to DB
-        db_url='mongodb://admin:' + urllib.parse.quote(self._dbp) +'@localhost:27017/?authMechanism=DEFAULT&authSource=admin'
-        db_client = pymongo.MongoClient(db_url)
-        at_db = db_client["AnuuTechDB"]
-        nodes_col = at_db["nodes"]
-        # Prepare query in good format
-        pem = self._PUBKEY.exportKey('PEM')
-        db_query = { "uid": self._uid }
-        db_values_toset = {"$set":{"pubkey": pem, "level": self._nodelevel, "last_view" : time.time()}}
-        # Update/Insert values, using upsert = True
-        nodes_col.update_one(db_query, db_values_toset, True)
+            
+        # Update node information on Database
+        self._update_DBinfo()
         
-        x=nodes_col.find_one({ "uid": self._uid })
-        puk=RSA.importKey(x.get('pubkey'))
-        if self._PUBKEY.exportKey('PEM') == puk.exportKey('PEM'):
-            print('Verification of node pub key done!')
-    
         try:
             connection.close()
             logmsg=("INITIALISATION Done with " + self._uid)
@@ -459,6 +445,8 @@ class ReconnectingNodeConsumer(object):
     def _ticking(self):
         if not self._first_init:
             logmsg=("PoH aggregation ticking for "+ self._uid)
+            # Update node information on Database
+            self._update_DBinfo()
             LOGGER.info(logmsg)
         self._first_init = False
 
@@ -527,7 +515,33 @@ class ReconnectingNodeConsumer(object):
             logmsg=("<p>WARNING! Unidentified error in Node_consumer, DEBUG!: %s</p>" % e )
             LOGGER.warning(logmsg)
             return False
-            
+
+    # Update node infos on DB
+    def _update_DBinfo(self):
+        # Create/Update infos on AnuuTechDB
+        # Get own IP
+        own_ip = requests.get('https://api.ipify.org').text
+        if len(own_ip)>15:
+            own_ip= requests.get('https://ident.me').text
+        # Prepare connection to DB
+        db_url='mongodb://admin:' + urllib.parse.quote(self._dbp) +'@localhost:27017/?authMechanism=DEFAULT&authSource=admin'
+        db_client = pymongo.MongoClient(db_url)
+        at_db = db_client["AnuuTechDB"]
+        nodes_col = at_db["nodes"]
+        # Prepare query in good format
+        pem = self._PUBKEY.exportKey('PEM')
+        db_query = { "uid": self._uid }
+        db_values_toset = {"$set":{"pubkey": pem, "level": self._nodelevel, "last_view" : time.time(),
+                                   "platform": platform.system(), "platform_version": platform.version(),
+                                   "platform_release": platform.release(),# does not work: "cpu_maxspeed_MhZ": psutil.cpu_freq()[2],
+                                   "cpu_avg_usage_percent": (psutil.getloadavg()[0]/ psutil.cpu_count() * 100),
+                                   "mem_total": psutil.virtual_memory()[0], "mem_percent_used": psutil.virtual_memory()[2],
+                                   "disk_total": psutil.disk_usage('/')[0], "disk_percent_used": psutil.disk_usage('/')[3],
+                                   "IP_address": own_ip}}
+        # Update/Insert values, using upsert = True
+        nodes_col.update_one(db_query, db_values_toset, True)
+        LOGGER.info("Node information updated on DB, IP = " + own_ip)
+    
     # Sender Method
     def _sending_msg(self):
         self._sending=True

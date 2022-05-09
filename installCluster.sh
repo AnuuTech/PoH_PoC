@@ -53,6 +53,7 @@ pip3 install pika
 pip3 install requests
 pip3 install pycryptodome
 pip3 install pymongo
+pip3 install psutil
 
 ## Open the needed ports (see https://www.rabbitmq.com/networking.html) TO REVIEW!
 apt-get install ufw

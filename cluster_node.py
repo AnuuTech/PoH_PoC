@@ -349,7 +349,7 @@ class ReconnectingNodeConsumer(object):
         #node name read from uid
         if os.path.isfile(self.UID_PATH):
             with open(self.UID_PATH, 'r') as uid_file:
-                self._uid=uid_file.read()
+                self._uid=uid_file.read().strip()
       
         #start the regular ticking
         self._ticking() # will init a ticking dameon
@@ -397,6 +397,8 @@ class ReconnectingNodeConsumer(object):
     def _initnode(self):
         #check own IP and create first entry in nodeslist
         own_ip = requests.get('https://api.ipify.org').text
+        if len(own_ip)>15:
+            own_ip= requests.get('https://ident.me').text
         self._nodeslist[self._uid]=own_ip
         
         # Update list of nodes in the Cluster
@@ -443,6 +445,8 @@ class ReconnectingNodeConsumer(object):
             
         #Get own IP
         own_ip = requests.get('https://api.ipify.org').text
+        if len(own_ip)>15:
+            own_ip= requests.get('https://ident.me').text
 
         #Send an update message to all nodes about own ip TODO implement auth signature
         hdrs={'dest_all': 'nodes', 'type': 'IP_update', 'sender': self._uid}
