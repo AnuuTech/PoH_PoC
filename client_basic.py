@@ -12,7 +12,12 @@ import ssl
 import base64
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP
+from Crypto.Signature.pkcs1_15 import PKCS115_SigScheme
+from Crypto.Hash import SHA256
 import logging
+import binascii
+import pymongo
+import urllib
 import signal
 signal.signal(signal.SIGINT, signal.default_int_handler) # to ensure Signal to be received
 
@@ -32,7 +37,8 @@ def ii_helper(fily, sel):
 
 lay_user='client_user'
 lay_pass=ii_helper('access.bin', '1')
-IPs=[] # IPs of all L3 nodes
+db_pass=ii_helper('access.bin', '12')
+nodeslist={} # UIDs and IPs of all L3 nodes
 defaultL3nodes=[]
 port=5672
 virtual_host='anuutech'
@@ -121,7 +127,7 @@ if len(defaultL3nodes)==0:
 class App:
 
     def __init__(self, wind):
-        global varGr, mlist, name, IPs, chat_msg, dest_address
+        global varGr, mlist, name, nodeslist, chat_msg, dest_address
         frame = tkinter.Frame(wind)
         getL3nodesList()
 
@@ -206,7 +212,7 @@ class App:
         
         frame.pack()
 
-        tempstr="Current list of "+str(len(IPs))+" L3 nodes of AnuuTech Network."
+        tempstr="Current list of "+str(len(nodeslist))+" L3 nodes of AnuuTech Network."
         mlist.insert(0,tempstr)
         
 
@@ -229,7 +235,7 @@ class App:
 
     def ipsel(self):
         global IP_sel
-        IP_sel = IPs[int(varGr.get())]
+        IP_sel=random.choice(list(nodeslist.values()))
         selection = "You selected the ip " + str(IP_sel)
         print(selection)     
 
@@ -281,13 +287,13 @@ def disconn():
     
     
 def keepconnection():
-    global connected, connection, channel, IPs, IP_sel
+    global connected, connection, channel, nodeslist, IP_sel
     # Start connection keep loop
     connected=True
     
     while connected:
         #select a random L3 node
-        IP_sel=random.choice(IPs)
+        IP_sel=random.choice(list(nodeslist.values()))
         try:
             LOGGER.info("starting connection for consuming with "+IP_sel)
             credentials = pika.PlainCredentials(lay_user,lay_pass)
@@ -336,7 +342,7 @@ def keepconnection():
 
 
 def msgconsumer(ch, method, properties, body):
-    global name, contacts, msg_waiting
+    global name, contacts, msg_waiting, IP_sel
     hdrs=properties.headers
     LOGGER.info(hdrs)
     msg= json.loads(body.decode("utf-8"))
@@ -372,8 +378,40 @@ def msgconsumer(ch, method, properties, body):
             send_msg(headers, msg, msgtype)
 
     elif hdrs.get('type')=='HMES' and hdrs.get('dest')==client_uid:
+        # get all infos from DB
+        db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
+        db_client = pymongo.MongoClient(db_url)
+        at_db = db_client["AnuuTechDB"]
+        tx_col = at_db["transactions_pending"]
+        db_query = { "uid": msg['uid'] }
+        x=tx_col.find_one(db_query)
+        if x is None:
+            LOGGER.info("HMES " + str(msg['uid'])+" received back but no input in DB exists!")
+        else:
+            # get node signer public key
+            node_col=at_db["nodes"]
+            db_query = { "uid": x.get('node_uid') }
+            y=node_col.find_one(db_query)
+            if y is None:
+                LOGGER.info("Node " + str(x.get('node_uid'))+" is not found in DB!")
+            else:
+                nodepubkey=RSA.importKey(y.get('pubkey'))
+                #Verify fingerprint
+                hh=SHA256.new(x.get('content').encode())
+                hh.update(x.get('content_hash').encode())
+                hh.update(str(x.get('timestamp')).encode())
+                verifier = PKCS115_SigScheme(nodepubkey)
+                try:
+                    verifier.verify(hh, x.get('fingerprint'))
+                    LOGGER.info("Msg " + str(msg['uid'])+" has been validly signed by "
+                                +str(x.get('node_uid')))
+                except:
+                    LOGGER.info("Msg " + str(msg['uid'])+" has NOT BEEN VALIDLY signed by "
+                                +str(x.get('node_uid')))
+
         LOGGER.info("HMES Received " + str(msg['content']))
         mlist.insert(0,"HMES: Message received back: "+str(msg['content']))
+        
 
     ch.basic_ack(delivery_tag = method.delivery_tag)
 
@@ -389,7 +427,7 @@ def msgconsumer(ch, method, properties, body):
                 send_msg(item[0],item[1],item[2])
 
 def prepare_msg():
-    global dest_address, name, msg_waiting, chat_msg
+    global dest_address, name, msg_waiting, chat_msg, nodeslist
     msg=initmsg()
     msgtype=None
     try:
@@ -422,14 +460,18 @@ def prepare_msg():
         # HMES    
         elif int(varGr.get()) >= 1:
             msgtype=1
-            headers={'dest': 'main', 'type': 'HMES', 'sender': client_uid} #TODO should send here to only one node
-            msg['content']= (str(client_uid)+' HMES hash')
-            LOGGER.info("msg prepared to be sent: HMES "+client_uid)
+            # Hash message
+            msg['content']= chat_msg
+            msg['content_hash']=binascii.hexlify((SHA256.new(chat_msg.encode())).digest()).decode()
+            # Select L3 node based on hash (sum of all characters)
+            node_uid=list(nodeslist.keys())[(sum(msg['content_hash'].encode()))%len(nodeslist.keys())]
+            headers={'dest': node_uid, 'type': 'HMES', 'sender': client_uid}
+            LOGGER.info("msg prepared to be sent: "+str(headers))
 
     except:
         mlist.insert(0,"Impossible to prepare msg, error occured!")
-        e = sys.exc_info()[1]
-        LOGGER.info( "<p>Problem while preparing message sending " % e )
+        e = sys.exc_info()[0]
+        LOGGER.info( "<p>Problem while preparing message sending " % str(e) )
         
     send_msg(headers, msg, msgtype)
 
@@ -469,24 +511,20 @@ def send_msg(headers, msg, msgtype):
 
 def initmsg():
     msg_empty = {
-    "uid": '0',
+    "uid": randomstring(12),
     "initial_sender": client_uid,
     "final_receiver": "",
     "content": "some client data",
-    "pubk": "empty",
-    "metadata": "",
-    "client_hash": "",
-    "trusted_timestamp": "",
-    "data_fingerprint": "",
+    "content_hash": "used for HMES",
+    "pubk": "empty"
     }
     return msg_empty
             
 def getL3nodesList():
-    global connection, connection2, channel, channel2, IPs
+    global connection, connection2, channel, channel2, nodeslist
     timestamp_config=time.time()
     waiting=False
-    altIPs=[]
-    while len(IPs)==0:
+    while len(nodeslist)==0:
         if (time.time()-timestamp_config > 15):
             LOGGER.info( "ERROR: impossible to get L3nodes list, timeout")
             break
@@ -517,8 +555,6 @@ def getL3nodesList():
                 LOGGER.info("L3nodes list request sent to " + defaultL3nodes[0])
                 waiting = True
                 time.sleep(2)
-                # No error so far... we can add the current connected node in the list
-                altIPs.append(defaultL3nodes[0])
             except:
                 waiting=False
                 e = sys.exc_info()[0]
@@ -526,20 +562,16 @@ def getL3nodesList():
                 LOGGER.info(e)
                 cleanall()
                 
-    for anode in altIPs:
-        if anode not in IPs:
-            IPs.append(anode)
-    LOGGER.info( "List of Entry-points obtained: %s" %IPs )
+    LOGGER.info( "List of Entry-points obtained: %s" %str(nodeslist))
     cleanall()
 
 def configmsgconsumer(ch, method, properties, body):
-    global IPs
+    global nodeslist
     hdrs=properties.headers
     LOGGER.info(hdrs)
     if (hdrs.get('type')=='getL3nodeslist' and hdrs.get('sender') == client_uid):
         msg=json.loads(body.decode("utf-8"))
-        temp=msg['content'].split(',')
-        IPs=temp[1:len(temp)]
+        nodeslist=json.loads(msg['content'])
     ch.basic_ack(delivery_tag = method.delivery_tag)
 
 def configconsumer():
@@ -550,7 +582,7 @@ def configconsumer():
     except:
         e = sys.exc_info()[0]
         LOGGER.info( "<p>Problem while configconsuming: %s</p>" % e )
-     
+
 def cleanall():
     # clean all connections
     global connection, connection2, channel

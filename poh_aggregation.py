@@ -10,10 +10,14 @@ import sys
 import requests
 import socket
 import json
-import string
-import random
 from threading import Timer, Thread
 from collections import Counter
+from Crypto.PublicKey import RSA
+from Crypto.Signature.pkcs1_15 import PKCS115_SigScheme
+from Crypto.Hash import SHA256
+import binascii
+import pymongo
+import urllib
 import signal
 signal.signal(signal.SIGINT, signal.default_int_handler) # to ensure Signal to be received
 
@@ -27,12 +31,7 @@ def ii_helper(fily, sel):
     brezi=bytes(c ^ abc[i % abcl] for i, c in enumerate(brez)).decode()
     return (brezi)
 
-def randomstring(stringLength):
-    letters = string.ascii_letters
-    return ''.join(random.choice(letters) for i in range(stringLength))
-
-LOGGER = logging.getLogger('CLUSTER_NODE_LOGGER')
-
+LOGGER = logging.getLogger('POH_AGGREGATION_LOGGER')
 
 class NodeConsumer(object):
     """This is an example consumer that will handle unexpected interactions
@@ -194,7 +193,7 @@ class NodeConsumer(object):
         """
         LOGGER.debug('Issuing consumer related RPC commands')
         self.add_on_cancel_callback()
-        qname='%s_main_queue' %self._nodelevel
+        qname='%s_own_queue' %self._nodelevel
         self._consumer_tag = self._channel.basic_consume(
             qname, self.on_message)
         self.was_consuming = True
@@ -320,16 +319,16 @@ class ReconnectingNodeConsumer(object):
     """
     
     VHOST='anuutech'
-    REQ_TIMEOUT=5 #timeout for http requests
     NODE_TICK_INTERVAL=60.0
     UID_PATH='/home/node_uid.file'
     MPORT=15672
     PORT=5672
-    
+  
     def __init__(self, xargs):
         self._reconnect_delay = 0
         self._pikaconn_parameters = None
-        self._nodeslist={}
+        self._defaultnodes=[]
+        self._nodeslist=[]
         self._uid=''
         self._msgs_to_send = []
         self._first_init = True
@@ -339,11 +338,32 @@ class ReconnectingNodeConsumer(object):
         self._nodelevel = str(xargs)
         self._node_user=str(self._nodelevel+'_node')
         self._np=ii_helper('access.bin', 1+int(self._nodelevel[1]))
+        self._dbp=ii_helper('access.bin', 12)
         self._IPU_path='/home/ip_updates.file'
+
+        # Get Signature keys
+        pubkey_path='node_pub.key'
+        privkey_path='node_priv.key'
+        if not os.path.isfile(pubkey_path) or not os.path.isfile(privkey_path):
+            # issue keys
+            private_key = RSA.generate(1024)
+            public_key = private_key.publickey()
+            LOGGER.info('No RSA keys found, new ones are created')
+            with open (privkey_path, "wb") as prv_file:
+                prv_file.write(private_key.exportKey('PEM','annu_seed-l'))
+            with open (pubkey_path, "wb") as pub_file:
+                pub_file.write(public_key.exportKey('PEM'))
+        else:
+            with open (privkey_path, "rb") as prv_file:
+                private_key=RSA.importKey(prv_file.read(),'annu_seed-l')
+            with open (pubkey_path, "rb") as pub_file:
+                public_key=RSA.importKey(pub_file.read())
+                LOGGER.debug('RSA keys sucessfully loaded.')
+        self._PUBKEY=public_key
+        self._PRIVKEY=private_key
         
         #Ensure existing log file
         LOGGER.info("Node has started\n")
-        
 
     def run(self):        
         #node name read from uid
@@ -394,67 +414,52 @@ class ReconnectingNodeConsumer(object):
             self._reconnect_delay = 30
         return self._reconnect_delay
 
-    def _initnode(self):
-        #check own IP and create first entry in nodeslist
-        own_ip = requests.get('https://api.ipify.org').text
-        self._nodeslist[self._uid]=own_ip
-        
-        # Update list of nodes in the Cluster
-        self._update_nodeslist()
-
+    def _initnode(self):             
         # Update connection parameters
         credentials = pika.PlainCredentials(self._node_user, self._np)
         self._pikaconn_parameters = pika.ConnectionParameters('localhost', self.PORT, self.VHOST, credentials,
                                                               heartbeat=10)
-        logmsg=("INITIALISATION Done with " + self._uid)
-        LOGGER.info(logmsg)
 
-    def _update_nodeslist(self):     
-        #Get list of nodes IPs through http requests on localhost (it includes itself if being a seed node)
-        try:
-            url = 'http://localhost:%s/api/nodes/' %self.MPORT
-            print(url)
-            response = requests.get(url, auth=(self._node_user, self._np), verify=False, timeout=self.REQ_TIMEOUT)
-            r=response.json()
-            for j in range(len(r)):
-                    if 'cluster_links' in r[j]:
-                        for k in range(len(r[j]['cluster_links'])):
-                            if 'peer_addr' in r[j]['cluster_links'][k]:
-                                if r[j]['cluster_links'][k]['peer_addr'] not in self._nodeslist.values():
-                                    # Add new IP, with uid missing
-                                    self._nodeslist['NOTSET_'+randomstring(6)]=(r[j]['cluster_links'][k]['peer_addr'])
-        except:
-            logmsg=("Problem connecting to localhost" + str(sys.exc_info()[1]))
-            LOGGER.warning(logmsg)
+        # Ensure local queue exists
+        connectiontemp = pika.BlockingConnection(self._pikaconn_parameters)
+        channeltemp=connectiontemp.channel()
+        qname='%s_own_queue' %self._nodelevel
+        channeltemp.queue_declare(queue=qname, auto_delete=False)
+        channeltemp.queue_bind(exchange=(self._nodelevel+'_main_exchange'), queue=qname, routing_key='all',
+                       arguments={'x-match': 'any', 'dest': self._uid, 'dest_all': 'nodes'})
 
-        #Check if new nodes UID-IPs have been provided
-        if os.path.isfile(self._IPU_path):
-            with open(self._IPU_path, 'r') as ip_file:
-                new_IPs=json.load(ip_file)
-                for node in new_IPs.keys():
-                    #Update UID only for known nodes (for the nodes with UID NOTSET)
-                    if new_IPs[node] in self._nodeslist.values():
-                        keytoupdate=(list(self._nodeslist.keys())[list(self._nodeslist.values()).index(new_IPs[node])])
-                        self._nodeslist[node] = self._nodeslist.pop(keytoupdate)
-                    #But update all IPs
-                    self._nodeslist[node] = new_IPs[node]
-                    LOGGER.info("IP_updated: "+node+" with IP "+new_IPs[node])         
-            os.remove(self._IPU_path)
-            
-        #Get own IP
-        own_ip = requests.get('https://api.ipify.org').text
 
-        #Send an update message to all nodes about own ip TODO implement auth signature
-        hdrs={'dest_all': 'nodes', 'type': 'IP_update', 'sender': self._uid}
-        msg=self._initmsg()
-        msg['content']=own_ip
-        self._msgs_to_send.append([msg, hdrs])
+        # Create/Update public key on AnuuTechDB
+        # Prepare connection to DB
+        db_url='mongodb://admin:' + urllib.parse.quote(self._dbp) +'@localhost:27017/?authMechanism=DEFAULT&authSource=admin'
+        db_client = pymongo.MongoClient(db_url)
+        at_db = db_client["AnuuTechDB"]
+        nodes_col = at_db["nodes"]
+        # Prepare query in good format
+        pem = self._PUBKEY.exportKey('PEM')
+        db_query = { "uid": self._uid }
+        db_values_toset = {"$set":{"pubkey": pem, "level": self._nodelevel, "last_view" : time.time()}}
+        # Update/Insert values, using upsert = True
+        nodes_col.update_one(db_query, db_values_toset, True)
         
-        LOGGER.info("The list of nodes in the cluster has been updated: " + str(self._nodeslist))
+        x=nodes_col.find_one({ "uid": self._uid })
+        puk=RSA.importKey(x.get('pubkey'))
+        if self._PUBKEY.exportKey('PEM') == puk.exportKey('PEM'):
+            print('Verification of node pub key done!')
+    
+        try:
+            connection.close()
+            logmsg=("INITIALISATION Done with " + self._uid)
+            LOGGER.info(logmsg)
+        except:
+            e = sys.exc_info()[1]
+            logmsg=str('Problem while closing the queue creation connection: %s</p>' % e)
+            LOGGER.warning(logmsg)
 
     def _ticking(self):
         if not self._first_init:
-            self._update_nodeslist()
+            logmsg=("PoH aggregation ticking for "+ self._uid)
+            LOGGER.info(logmsg)
         self._first_init = False
 
         t = Timer(self.NODE_TICK_INTERVAL, self._ticking)
@@ -469,14 +474,51 @@ class ReconnectingNodeConsumer(object):
             msgback=msg
             hdrs=properties.headers
             LOGGER.debug(hdrs)
-            if (hdrs.get('type') == ('get'+str(self._nodelevel)+'nodeslist')):
-                clean_nodelist=self._nodeslist.copy()
-                # Remove nodes that are not yet with a correct UID
-                clean_nodelist = {k:el  for k, el in clean_nodelist.items() if not (k.startswith('NOTSET'))}
-                msgback['content']=json.dumps(clean_nodelist)
-                LOGGER.info("will send: get"+str(clean_nodelist)+"nodeslist with " + str(msgback))
+            
+            if (hdrs.get('type')=='HMES'):
+                #time.sleep(0.1)
+                #Create fingerprint
+                tt=time.time()
+                hh=SHA256.new(msg['content'].encode())
+                hh.update(msg['content_hash'].encode())
+                hh.update(str(tt).encode())
+                signer = PKCS115_SigScheme(self._PRIVKEY)
+                fingerprint = signer.sign(hh)
+
+                # Create transaction on AnuuTechDB
+                # Prepare connection to DB
+                db_url='mongodb://admin:' + urllib.parse.quote(self._dbp) +'@localhost:27017/?authMechanism=DEFAULT&authSource=admin'
+                db_client = pymongo.MongoClient(db_url)
+                at_db = db_client["AnuuTechDB"]
+                tx_col = at_db["transactions_pending"]
+                # Prepare query in good format
+                db_query = { "uid": msg['uid'], "content": msg['content'], "content_hash": msg['content_hash'],
+                             "timestamp": tt, "node_uid": self._uid, "fingerprint": fingerprint }
+                # Insert value
+                tx_col.insert_one(db_query)
+                LOGGER.info("Tx sent to pending Txs on DB" +str(db_query))
+
+                # Sends back to client
                 hdrs['dest']=hdrs.get('sender')
+                msgback['content']='Tx successfully added to pending Txs, fingerprint is in content_hash'
+                msgback['content_hash']=binascii.hexlify(fingerprint).decode()
+                LOGGER.info("HMES will send back "+str(msgback['uid'])+" " +str(hdrs))
                 self._msgs_to_send.append([msgback, hdrs])
+            elif (hdrs.get('type')=='IP_update'):
+                IP_update={}
+                # If already new IPs have been collected and not handled yet
+                if os.path.isfile(self._IPU_path):
+                    with open(self._IPU_path, 'r') as ip_file:
+                        IP_update = json.load(ip_file)
+                    # Add the new IP
+                    IP_update[hdrs.get('sender')]=msg['content']
+                # or file does not exist
+                else:
+                    IP_update[hdrs.get('sender')]=msg['content']
+                # Write new file
+                with open(self._IPU_path, 'w') as ip_file:
+                        json.dump(IP_update, ip_file)
+                LOGGER.info("New IP "+msg['content']+" saved for " +hdrs.get('sender'))
             else:
                 LOGGER.error("ERROR: unknown message type" + hdrs.get('type'))
             return True
@@ -485,27 +527,13 @@ class ReconnectingNodeConsumer(object):
             logmsg=("<p>WARNING! Unidentified error in Node_consumer, DEBUG!: %s</p>" % e )
             LOGGER.warning(logmsg)
             return False
-        
-    def _initmsg(self):
-        msg_empty = {
-        "uid": randomstring(12),
-        "initial_sender": self._uid,
-        "final_receiver": "",
-        "content": "some client data",
-        "content_hash": "used for HMES",
-        "pubk": "empty"
-        }
-        return msg_empty
-
+            
     # Sender Method
     def _sending_msg(self):
         self._sending=True
         # creation of sending connection:
         try:
-            credentials = pika.PlainCredentials(self._node_user, self._np)
-            parameters = pika.ConnectionParameters('localhost', self.PORT, self.VHOST, credentials,
-                                                   heartbeat=6)
-            sendingconn = pika.BlockingConnection(parameters)
+            sendingconn = pika.BlockingConnection(self._pikaconn_parameters)
             sendingchan = sendingconn.channel()
         except pika.exceptions.AMQPConnectionError as err:
             logmsg=str("Impossible to create sending connection!".format(err))
@@ -533,10 +561,11 @@ class ReconnectingNodeConsumer(object):
                          
                     # messages to reply queue
                     if self._nodelevel == 'L3':
-                        #sends
-                        sendingchan.basic_publish(exchange='L3_main_exchange', routing_key='all',
-                                          properties=pika.BasicProperties(
-                                              headers=new_hdrs), body=(json.dumps(msg)))
+                        if (hdrs.get('type') == 'getL3nodeslist' or hdrs.get('type') == 'HMES'):
+                            #sends back to client
+                            sendingchan.basic_publish(exchange='L3_main_exchange', routing_key='all',
+                                              properties=pika.BasicProperties(
+                                                  headers=new_hdrs), body=(json.dumps(msg)))
                     elif self._nodelevel == 'L2':
                         if (hdrs.get('type') == 'getL2nodeslisttoL3'):
                             #sends back to L3 initial sender TODO implement connection to L3
@@ -585,11 +614,10 @@ class ReconnectingNodeConsumer(object):
                 logmsg=str('Problem while closing send connection: %s</p>' % e)
                 LOGGER.warning(logmsg)
 
-#-----------------------------
-
+#-----------------------------    
 def main():
     hdlr = logging.StreamHandler()
-    fhdlr = logging.FileHandler("log_node.txt", mode='w')
+    fhdlr = logging.FileHandler("log_poh_agg.txt", mode='w')
     format = logging.Formatter('%(asctime)-15s %(levelname)s : %(message)s')
     fhdlr.setFormatter(format)
     hdlr.setFormatter(format)

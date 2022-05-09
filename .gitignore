@@ -3,3 +3,5 @@ log*
 atclient_privkey.file
 atclient_pubkey.file
 client_uid.file
+node_priv.key
+node_pub.key

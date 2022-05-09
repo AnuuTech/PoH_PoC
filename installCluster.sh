@@ -16,13 +16,12 @@ else
 fi
 echo $nodelevel
 
-## Create and save a unique id 
+## Create and save a unique name id 
 if [ ! -s node_uid.file ]
 then
-	< /dev/urandom tr -dc _A-Z-a-z-0-9 | head -c 6 >/home/node_uid.file
+	aa=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 6 | head -n 1)
+	echo $nodelevel"Node_${aa}" > /home/node_uid.file
 fi
-uid=$( cat /home/node_uid.file )
-node_name="Node_${uid}"
 
 ## Create and save a local password 
 if [ ! -s ps_loc.file ]
@@ -52,6 +51,8 @@ apt -y update
 apt -y install python3-pip
 pip3 install pika
 pip3 install requests
+pip3 install pycryptodome
+pip3 install pymongo
 
 ## Open the needed ports (see https://www.rabbitmq.com/networking.html) TO REVIEW!
 apt-get install ufw
@@ -189,7 +190,7 @@ if (( $init_cluster == 1 )); then
 		#L3 node
 		key=$((python3 ii_helper.py access.bin 4) 2>&1)
 		rabbitmqctl add_user L3_node $key
-		rabbitmqctl set_permissions -p "anuutech" L3_node "" "L3_main_exchange" "L3_main_queue|L3_own_queue"
+		rabbitmqctl set_permissions -p "anuutech" L3_node "L3_own_queue" "L3_main_exchange|L3_own_queue" "L3_main_exchange|L3_main_queue|L3_own_queue"
 		rabbitmqctl set_user_tags L3_node monitoring
 		#L2ext node
 		key=$((python3 ii_helper.py access.bin 6) 2>&1)
@@ -206,15 +207,20 @@ fi
 ## Start file
 rm start_node.sh
 cat >>start_node.sh <<EOF
-nohup python3 -u /home/cluster_node.py $nodelevel > /home/output.log &
-echo \$! > python_pid.file
+nohup python3 -u /home/cluster_node.py $nodelevel > /dev/null 2>&1 &
+echo \$! > python_pid1.file
+nohup python3 -u /home/poh_aggregation.py $nodelevel > /dev/null 2>&1 &
+echo \$! > python_pid2.file
 EOF
 chmod +x start_node.sh
 
 ## Stop file
 rm stop_node.sh
 cat >>stop_node.sh <<EOF
-pid=\$(cat python_pid.file)
+pid=\$(cat python_pid1.file)
+kill -SIGINT \$pid
+echo python process \$pid stopping...
+pid=\$(cat python_pid2.file)
 kill -SIGINT \$pid
 echo python process \$pid stopping...
 EOF
