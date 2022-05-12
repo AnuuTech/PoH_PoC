@@ -303,7 +303,7 @@ def keepconnection():
             channel.queue_declare(queue=client_uid, auto_delete=True)
             # TODO Add dest as a secretUID, not visible as a queue?
             channel.queue_bind(exchange='L3_main_exchange', queue=client_uid, routing_key='all',
-                               arguments={'x-match': 'any', 'dest': client_uid, 'dest_all': 'clients'})
+                               arguments={'x-match': 'any', 'service': 'chat', 'service': 'PoH'})
 
             channel.basic_qos(prefetch_count=1)           
             channel.basic_consume(queue=client_uid, on_message_callback=msgconsumer)
@@ -549,9 +549,9 @@ def getL3nodesList():
                 msg=initmsg()
                 channel2.basic_publish(exchange='L3_main_exchange', routing_key='all',
                                        properties=pika.BasicProperties(
-                                           headers={'dest': 'main', 'type': 'getL3nodeslist', 'sender': client_uid}),
+                                           headers={'dest': 'main', 'type': 'reqL3nodeslist', 'sender': client_uid}),
                                        body=(json.dumps(msg)))
-                LOGGER.info("msg sent: get entrypoints list " + client_uid)
+                LOGGER.info("msg sent: req entrypoints list " + client_uid)
                 LOGGER.info("L3nodes list request sent to " + defaultL3nodes[0])
                 waiting = True
                 time.sleep(2)
@@ -569,7 +569,7 @@ def configmsgconsumer(ch, method, properties, body):
     global nodeslist
     hdrs=properties.headers
     LOGGER.info(hdrs)
-    if (hdrs.get('type')=='getL3nodeslist' and hdrs.get('sender') == client_uid):
+    if (hdrs.get('type')=='sentL3nodeslist' and hdrs.get('sender') == client_uid):
         msg=json.loads(body.decode("utf-8"))
         nodeslist=json.loads(msg['content'])
     ch.basic_ack(delivery_tag = method.delivery_tag)

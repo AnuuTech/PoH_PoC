@@ -1,5 +1,5 @@
 ## AnuuTech Proof-Of-Hash ##
-
+Work In Progress: use release 0.0.2 for now!
 Initial network solution using RabbitMQ.
 
 

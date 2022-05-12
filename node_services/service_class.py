@@ -12,27 +12,13 @@ import socket
 import json
 import string
 import random
+import pymongo
+import urllib
+from Crypto.PublicKey import RSA
 from threading import Timer, Thread
 from collections import Counter
 import signal
 signal.signal(signal.SIGINT, signal.default_int_handler) # to ensure Signal to be received
-
-#helper function
-def ii_helper(fily, sel):
-    abc = b'k_AnuuTech'
-    abcl = len(abc)
-    with open(fily, 'rb') as s_file:
-        brezl=s_file.readlines()
-    brez=brezl[int(sel)].replace(b'\n',b'')
-    brezi=bytes(c ^ abc[i % abcl] for i, c in enumerate(brez)).decode()
-    return (brezi)
-
-def randomstring(stringLength):
-    letters = string.ascii_letters
-    return ''.join(random.choice(letters) for i in range(stringLength))
-
-LOGGER = logging.getLogger('CLUSTER_NODE_LOGGER')
-
 
 class NodeConsumer(object):
     """This is an example consumer that will handle unexpected interactions
@@ -45,7 +31,7 @@ class NodeConsumer(object):
     commands that were issued and that should surface in the output as well.
     """
 
-    def __init__(self, conn_parameters, nodelevel, consumer_method):
+    def __init__(self, LOGGER, conn_parameters, nodelevel, consumer_method, service):
         """Create a new instance of the consumer class, passing in the PIKA connection parameters.
         :param pika.ConnectionParameters _conn_parameters: The PIKA connection parameters
         :param string nodelevel: Level of the node (L1, L2 or L3)
@@ -57,7 +43,9 @@ class NodeConsumer(object):
         self._closing = False
         self._consuming = False
         self._nodelevel =  nodelevel
-        
+        self._service = service
+
+        self.LOGGER = LOGGER
         self._conn_parameters = conn_parameters
         self._consumer_method = consumer_method
 
@@ -71,7 +59,7 @@ class NodeConsumer(object):
         will be invoked by pika.
         :rtype: pika.SelectConnection
         """
-        LOGGER.debug('Connecting to %s', self._conn_parameters)
+        self.LOGGER.debug('Connecting to %s', self._conn_parameters)
         return pika.SelectConnection(
             parameters=self._conn_parameters,
             on_open_callback=self.on_connection_open,
@@ -81,9 +69,9 @@ class NodeConsumer(object):
     def close_connection(self):
         self._consuming = False
         if self._connection.is_closing or self._connection.is_closed:
-            LOGGER.debug('Connection is closing or already closed')
+            self.LOGGER.debug('Connection is closing or already closed')
         else:
-            LOGGER.debug('Closing connection')
+            self.LOGGER.debug('Closing connection')
             self._connection.close()
 
     def on_connection_open(self, _unused_connection):
@@ -92,7 +80,7 @@ class NodeConsumer(object):
         case we need it, but in this case, we'll just mark it unused.
         :param pika.SelectConnection _unused_connection: The connection
         """
-        LOGGER.debug('Connection opened')
+        self.LOGGER.debug('Connection opened')
         self.open_channel()
 
     def on_connection_open_error(self, _unused_connection, err):
@@ -101,7 +89,7 @@ class NodeConsumer(object):
         :param pika.SelectConnection _unused_connection: The connection
         :param Exception err: The error
         """
-        LOGGER.error('Connection open failed: %s', err)
+        self.LOGGER.error('Connection open failed: %s', err)
         self.reconnect()
 
     def on_connection_closed(self, _unused_connection, reason):
@@ -116,7 +104,7 @@ class NodeConsumer(object):
         if self._closing:
             self._connection.ioloop.stop()
         else:
-            LOGGER.warning('Connection closed, reconnect necessary: %s', reason)
+            self.LOGGER.warning('Connection closed, reconnect necessary: %s', reason)
             self.reconnect()
 
     def reconnect(self):
@@ -132,7 +120,7 @@ class NodeConsumer(object):
         command. When RabbitMQ responds that the channel is open, the
         on_channel_open callback will be invoked by pika.
         """
-        LOGGER.debug('Creating a new channel')
+        self.LOGGER.debug('Creating a new channel')
         self._connection.channel(on_open_callback=self.on_channel_open)
 
     def on_channel_open(self, channel):
@@ -141,7 +129,7 @@ class NodeConsumer(object):
         Since the channel is now open, we'll declare the exchange to use.
         :param pika.channel.Channel channel: The channel object
         """
-        LOGGER.debug('Channel opened')
+        self.LOGGER.debug('Channel opened')
         self._channel = channel
         self.add_on_channel_close_callback()
         self.set_qos()
@@ -161,14 +149,14 @@ class NodeConsumer(object):
         which will invoke the needed RPC commands to start the process.
         :param pika.frame.Method _unused_frame: The Basic.QosOk response frame
         """
-        LOGGER.debug('QOS set to: %d', self._prefetch_count)
+        self.LOGGER.debug('QOS set to: %d', self._prefetch_count)
         self.start_consuming()
 
     def add_on_channel_close_callback(self):
         """This method tells pika to call the on_channel_closed method if
         RabbitMQ unexpectedly closes the channel.
         """
-        LOGGER.debug('Adding channel close callback')
+        self.LOGGER.debug('Adding channel close callback')
         self._channel.add_on_close_callback(self.on_channel_closed)
 
     def on_channel_closed(self, channel, reason):
@@ -180,7 +168,7 @@ class NodeConsumer(object):
         :param pika.channel.Channel: The closed channel
         :param Exception reason: why the channel was closed
         """
-        LOGGER.warning('Channel %i was closed: %s', channel, reason)
+        self.LOGGER.warning('Channel %i was closed: %s', channel, reason)
         self.close_connection()
 
     def start_consuming(self):
@@ -192,9 +180,9 @@ class NodeConsumer(object):
         cancel consuming. The on_message method is passed in as a callback pika
         will invoke when a message is fully received.
         """
-        LOGGER.debug('Issuing consumer related RPC commands')
+        self.LOGGER.debug('Issuing consumer related RPC commands')
         self.add_on_cancel_callback()
-        qname='%s_main_queue' %self._nodelevel
+        qname=self._nodelevel+'_'+self._service+'_queue'
         self._consumer_tag = self._channel.basic_consume(
             qname, self.on_message)
         self.was_consuming = True
@@ -205,7 +193,7 @@ class NodeConsumer(object):
         for some reason. If RabbitMQ does cancel the consumer,
         on_consumer_cancelled will be invoked by pika.
         """
-        LOGGER.debug('Adding consumer cancellation callback')
+        self.LOGGER.debug('Adding consumer cancellation callback')
         self._channel.add_on_cancel_callback(self.on_consumer_cancelled)
 
     def on_consumer_cancelled(self, method_frame):
@@ -213,7 +201,7 @@ class NodeConsumer(object):
         receiving messages.
         :param pika.frame.Method method_frame: The Basic.Cancel frame
         """
-        LOGGER.debug('Consumer was cancelled remotely, shutting down: %r',
+        self.LOGGER.debug('Consumer was cancelled remotely, shutting down: %r',
                     method_frame)
         if self._channel:
             self._channel.close()
@@ -230,7 +218,7 @@ class NodeConsumer(object):
         :param pika.Spec.BasicProperties: properties
         :param bytes body: The message body
         """
-        LOGGER.debug('Received message # %s: %s', basic_deliver.delivery_tag, body)
+        self.LOGGER.debug('Received message # %s: %s', basic_deliver.delivery_tag, body)
                     #basic_deliver.delivery_tag, properties.headers, body)
         # MODIF FROM ORIGINAL
         if self._consumer_method(channel, basic_deliver, properties, body):
@@ -244,7 +232,7 @@ class NodeConsumer(object):
         Basic.Ack RPC method for the delivery tag.
         :param int delivery_tag: The delivery tag from the Basic.Deliver frame
         """
-        LOGGER.debug('Acknowledging message %s', delivery_tag)
+        self.LOGGER.debug('Acknowledging message %s', delivery_tag)
         self._channel.basic_ack(delivery_tag)
 
     def nacknowledge_message(self, delivery_tag):
@@ -252,7 +240,7 @@ class NodeConsumer(object):
         Basic.Nack RPC method for the delivery tag.
         :param int delivery_tag: The delivery tag from the Basic.Deliver frame
         """
-        LOGGER.debug('Nacknowledging message %s', delivery_tag)
+        self.LOGGER.debug('Nacknowledging message %s', delivery_tag)
         self._channel.basic_nack(delivery_tag)
 
     def stop_consuming(self):
@@ -260,7 +248,7 @@ class NodeConsumer(object):
         Basic.Cancel RPC command.
         """
         if self._channel:
-            LOGGER.debug('Sending a Basic.Cancel RPC command to RabbitMQ')
+            self.LOGGER.debug('Sending a Basic.Cancel RPC command to RabbitMQ')
             cb = functools.partial(
                 self.on_cancelok, userdata=self._consumer_tag)
             self._channel.basic_cancel(self._consumer_tag, cb)
@@ -274,7 +262,7 @@ class NodeConsumer(object):
         :param str|unicode userdata: Extra user data (consumer tag)
         """
         self._consuming = False
-        LOGGER.debug(
+        self.LOGGER.debug(
             'RabbitMQ acknowledged the cancellation of the consumer: %s',
             userdata)
         self.close_channel()
@@ -283,7 +271,7 @@ class NodeConsumer(object):
         """Call to close the channel with RabbitMQ cleanly by issuing the
         Channel.Close RPC command.
         """
-        LOGGER.debug('Closing the channel')
+        self.LOGGER.debug('Closing the channel')
         self._channel.close()
 
     def run(self):
@@ -305,47 +293,105 @@ class NodeConsumer(object):
         """
         if not self._closing:
             self._closing = True
-            LOGGER.debug('Stopping')
+            self.LOGGER.debug('Stopping')
             if self._consuming:
                 self.stop_consuming()
                 self._connection.ioloop.start()
             else:
                 self._connection.ioloop.stop()
-            LOGGER.debug('Stopped')
+            self.LOGGER.debug('Stopped')
 
 
 class ReconnectingNodeConsumer(object):
     """This is a consumer that will reconnect if the nested
     Consumer indicates that a reconnect is necessary.
     """
-    
+
+    SW_VERSION='0.0.3beta'
     VHOST='anuutech'
     REQ_TIMEOUT=5 #timeout for http requests
     NODE_TICK_INTERVAL=60.0
-    UID_PATH='/home/node_uid.file'
     MPORT=15672
     PORT=5672
+    LOGGER = logging.getLogger('SERVICE_LOGGER')
+    MAIN_PATH=''#Disabled for now os.path.abspath(os.path.join(os.getcwd(), os.pardir))
+    IP_PATH=MAIN_PATH+'node_data/ip.file'
+    NODESLIST_PATH=MAIN_PATH+'node_data/nodeslist.file'
+    NODESLIST_LOWER_PATH=MAIN_PATH+'node_data/nodeslist_lower.file'
+    UID_PATH=MAIN_PATH+'node_data/node_uid.file'
+    PS_PATH=MAIN_PATH+'node_data/ps_loc.file'
+
+    #helper functions
+    def ii_helper(self, fily, sel):
+        abc = b'k_AnuuTech'
+        abcl = len(abc)
+        with open(fily, 'rb') as s_file:
+            brezl=s_file.readlines()
+        brez=brezl[int(sel)].replace(b'\n',b'')
+        brezi=bytes(c ^ abc[i % abcl] for i, c in enumerate(brez)).decode()
+        return (brezi)
     
-    def __init__(self, xargs):
+    def randomstring(self, stringLength):
+        letters = string.ascii_letters
+        return ''.join(random.choice(letters) for i in range(stringLength))
+    
+    def __init__(self, xargs,yargs):
         self._reconnect_delay = 0
         self._pikaconn_parameters = None
-        self._nodeslist={}
+        self._nodeslist=[]
+        self._nodeslist_lower=[]
         self._uid=''
         self._msgs_to_send = []
         self._first_init = True
         self._sending = False
         self._threadsend = None
 
+        self._own_IP=''
         self._nodelevel = str(xargs)
-        self._node_user=str(self._nodelevel+'_node')
-        self._np=ii_helper('access.bin', 1+int(self._nodelevel[1]))
-        self._IPU_path='/home/ip_updates.file'
+        self._service = str(yargs)
+        self._node_user='layer_local'
+        self._np='pass_'
+        self._db_pass=self.ii_helper('node_data/access.bin', '12')
+
+        # Get Signature keys
+        pubkey_path='node_pub.key'
+        privkey_path='node_priv.key'
+        if not os.path.isfile(pubkey_path) or not os.path.isfile(privkey_path):
+            # issue keys
+            private_key = RSA.generate(1024)
+            public_key = private_key.publickey()
+            self.LOGGER.info('No RSA keys found, new ones are created')
+            with open (privkey_path, "wb") as prv_file:
+                prv_file.write(private_key.exportKey('PEM','annu_seed-l'))
+            with open (pubkey_path, "wb") as pub_file:
+                pub_file.write(public_key.exportKey('PEM'))
+        else:
+            with open (privkey_path, "rb") as prv_file:
+                private_key=RSA.importKey(prv_file.read(),'annu_seed-l')
+            with open (pubkey_path, "rb") as pub_file:
+                public_key=RSA.importKey(pub_file.read())
+                self.LOGGER.debug('RSA keys sucessfully loaded.')
+        self._PUBKEY=public_key
+        self._PRIVKEY=private_key
         
         #Ensure existing log file
-        LOGGER.info("Node has started\n")
-        
+        self.LOGGER.info("Service "+self._service +" has started\n")
 
-    def run(self):        
+    def run(self):
+        #LOGGER init
+        hdlr = logging.StreamHandler()
+        fhdlr = logging.FileHandler("log_"+self._service+".txt", mode='w')
+        format = logging.Formatter('%(asctime)-15s %(levelname)s : %(message)s')
+        fhdlr.setFormatter(format)
+        hdlr.setFormatter(format)
+        self.LOGGER.addHandler(hdlr)
+        self.LOGGER.addHandler(fhdlr)
+        self.LOGGER.setLevel(logging.DEBUG)
+
+        #update password of node
+        with open(self.PS_PATH, 'r') as ps_file:
+            self._np=self._np+ps_file.read()
+
         #node name read from uid
         if os.path.isfile(self.UID_PATH):
             with open(self.UID_PATH, 'r') as uid_file:
@@ -354,14 +400,20 @@ class ReconnectingNodeConsumer(object):
         #start the regular ticking
         self._ticking() # will init a ticking dameon
 
+        # Update consumer connection parameters
+        credentials = pika.PlainCredentials(self._node_user, self._np)
+        self._pikaconn_parameters = pika.ConnectionParameters('localhost', self.PORT, self.VHOST, credentials,
+                                                              heartbeat=10)
+        
         #First initialisation of node
         self._initnode()
-        self._consumer = NodeConsumer(self._pikaconn_parameters, self._nodelevel, self._node_consumer)
-        
+
         # Start sending_msg thread on a separate connection
         self._threadsend = Thread(target=self._sending_msg)
         self._threadsend.start()
-        
+
+        # Start the main thread-consuming
+        self._consumer = NodeConsumer(self.LOGGER, self._pikaconn_parameters, self._nodelevel, self._node_consumer, self._service)
         while True:
             try:
                 self._consumer.run()
@@ -377,11 +429,11 @@ class ReconnectingNodeConsumer(object):
         if self._consumer.should_reconnect:
             self._consumer.stop()
             reconnect_delay = self._get_reconnect_delay()
-            LOGGER.info('Reconnecting after %d seconds', reconnect_delay)
+            self.LOGGER.info('Reconnecting after %d seconds', reconnect_delay)
             time.sleep(reconnect_delay)
             # Re-init node, redefine consumer and restart sending thread
             self._initnode()
-            self._consumer = NodeConsumer(self._pikaconn_parameters, self._nodelevel, self._node_consumer)
+            self._consumer = NodeConsumer(self.LOGGER, self._pikaconn_parameters, self._nodelevel, self._node_consumer, self._service)
             self._threadsend = Thread(target=self._sending_msg)
             self._threadsend.start()
 
@@ -395,222 +447,142 @@ class ReconnectingNodeConsumer(object):
         return self._reconnect_delay
 
     def _initnode(self):
-        #check own IP and create first entry in nodeslist
-        own_ip = requests.get('https://api.ipify.org').text
-        if len(own_ip)>15:
-            own_ip= requests.get('https://ident.me').text
-        self._nodeslist[self._uid]=own_ip
-        
-        # Update list of nodes in the Cluster
-        self._update_nodeslist()
+        #IP from file
+        if os.path.isfile(self.IP_PATH):
+            with open(self.IP_PATH, 'r') as ip_file:
+                self._own_IP=ip_file.read().strip()
 
-        # Update connection parameters
-        credentials = pika.PlainCredentials(self._node_user, self._np)
-        self._pikaconn_parameters = pika.ConnectionParameters('localhost', self.PORT, self.VHOST, credentials,
-                                                              heartbeat=10)
-        logmsg=("INITIALISATION Done with " + self._uid)
-        LOGGER.info(logmsg)
+        #nodelist read from uid
+        if os.path.isfile(self.NODESLIST_PATH):
+            with open(self.NODESLIST_PATH, 'r') as nodes_file:
+                self._nodeslist=json.load(nodes_file)
 
-    def _update_nodeslist(self):     
-        #Get list of nodes IPs through http requests on localhost (it includes itself if being a seed node)
+        #lower nodelist read from uid
+        if os.path.isfile(self.NODESLIST_LOWER_PATH):
+            with open(self.NODESLIST_LOWER_PATH, 'r') as nodes_file:
+                self._nodeslist_lower=json.load(nodes_file) 
+
+        # Create service queue
         try:
-            url = 'http://localhost:%s/api/nodes/' %self.MPORT
-            print(url)
-            response = requests.get(url, auth=(self._node_user, self._np), verify=False, timeout=self.REQ_TIMEOUT)
-            r=response.json()
-            for j in range(len(r)):
-                    if 'cluster_links' in r[j]:
-                        for k in range(len(r[j]['cluster_links'])):
-                            if 'peer_addr' in r[j]['cluster_links'][k]:
-                                if r[j]['cluster_links'][k]['peer_addr'] not in self._nodeslist.values():
-                                    # Add new IP, with uid missing
-                                    self._nodeslist['NOTSET_'+randomstring(6)]=(r[j]['cluster_links'][k]['peer_addr'])
-        except:
-            logmsg=("Problem connecting to localhost" + str(sys.exc_info()[1]))
-            LOGGER.warning(logmsg)
-
-        #Check if new nodes UID-IPs have been provided
-        if os.path.isfile(self._IPU_path):
-            with open(self._IPU_path, 'r') as ip_file:
-                new_IPs=json.load(ip_file)
-                for node in new_IPs.keys():
-                    #Update UID only for known nodes (for the nodes with UID NOTSET)
-                    if new_IPs[node] in self._nodeslist.values():
-                        keytoupdate=(list(self._nodeslist.keys())[list(self._nodeslist.values()).index(new_IPs[node])])
-                        self._nodeslist[node] = self._nodeslist.pop(keytoupdate)
-                    #But update all IPs
-                    self._nodeslist[node] = new_IPs[node]
-                    LOGGER.info("IP_updated: "+node+" with IP "+new_IPs[node])         
-            os.remove(self._IPU_path)
+            connection = pika.BlockingConnection(self._pikaconn_parameters)
+            channel=connection.channel()
+            qname_i=self._nodelevel+'_'+self._service+'_queue'
+            exname_i=self._nodelevel+'_main_exchange'
+            channel.queue_declare(queue=qname_i)
+            #bind the queue to the exchange
+            h_arguments=self._get_headers_arg()
+            channel.queue_bind(exchange=exname_i, queue=qname_i, routing_key='all',
+                           arguments=h_arguments)
+            #Close the connection
+            connection.close()
             
-        #Get own IP
-        own_ip = requests.get('https://api.ipify.org').text
-        if len(own_ip)>15:
-            own_ip= requests.get('https://ident.me').text
+        except pika.exceptions.AMQPConnectionError as err:
+            logmsg=str("Impossible to create the initial connection!".format(err))
+            self.LOGGER.critical(logmsg)
 
-        #Send an update message to all nodes about own ip TODO implement auth signature
-        hdrs={'dest_all': 'nodes', 'type': 'IP_update', 'sender': self._uid}
-        msg=self._initmsg()
-        msg['content']=own_ip
-        self._msgs_to_send.append([msg, hdrs])
-        
-        LOGGER.info("The list of nodes in the cluster has been updated: " + str(self._nodeslist))
+        logmsg=("INITIALISATION of "+self._uid+" done, IP: " + self._own_IP+
+                " number of layer nodes: "+str(len(self._nodeslist))+
+                " number of lower layer nodes: "+str(len(self._nodeslist_lower)))
+        self.LOGGER.info(logmsg)
+
+    def _get_headers_arg(self):
+        argum={'x-match': 'any', 'service': self._service}
+        return argum
 
     def _ticking(self):
         if not self._first_init:
-            self._update_nodeslist()
+            self._ticking_actions()
         self._first_init = False
 
         t = Timer(self.NODE_TICK_INTERVAL, self._ticking)
         t.daemon=True
         t.start()
 
+    def _ticking_actions(self):
+        return
+
     # Consumer method
     def _node_consumer(self, ch, method, properties, body):
         try:
             msg=json.loads(body.decode("utf-8"))
-            LOGGER.info("Received decode: " + str(msg))
-            msgback=msg
+            self.LOGGER.info("Received decode: " + str(msg))
             hdrs=properties.headers
-            LOGGER.debug(hdrs)
-            if (hdrs.get('type') == ('get'+str(self._nodelevel)+'nodeslist')):
-                clean_nodelist=self._nodeslist.copy()
-                # Remove nodes that are not yet with a correct UID
-                clean_nodelist = {k:el  for k, el in clean_nodelist.items() if not (k.startswith('NOTSET'))}
-                msgback['content']=json.dumps(clean_nodelist)
-                LOGGER.info("will send: get"+str(clean_nodelist)+"nodeslist with " + str(msgback))
-                hdrs['dest']=hdrs.get('sender')
-                self._msgs_to_send.append([msgback, hdrs])
-            else:
-                LOGGER.error("ERROR: unknown message type" + hdrs.get('type'))
-            return True
+            self.LOGGER.debug(hdrs)
+            return (_msg_process(msg, hdrs))
         except:
             e = sys.exc_info()[1]
-            logmsg=("<p>WARNING! Unidentified error in Node_consumer, DEBUG!: %s</p>" % e )
-            LOGGER.warning(logmsg)
+            logmsg=str("<p>Problem while consuming: %s</p>" % e )
+            self.LOGGER.error(logmsg)
             return False
         
+    def _msg_process(self, msg, hdrs):
+        self.LOGGER.info("Entered default method")
+        return True
+        
     def _initmsg(self):
-        msg_empty = {
+        basic_msg = {
         "uid": randomstring(12),
-        "initial_sender": self._uid,
-        "final_receiver": "",
         "content": "some client data",
         "content_hash": "used for HMES",
         "pubk": "empty"
         }
-        return msg_empty
+        return basic_msg
 
-    # Sender Method
+    def _initheaders(self):
+        basic_headers = {
+            'client_uid': '',
+            'client_node_IP': '',
+            'sender_uid': self._uid,
+            'sender_IP': self._own_IP,
+            'dest': '',
+            'dest_all': '',
+            'service': self._service,
+            'type': ''
+            }
+        return basic_headers
+                
+
+    # Sending thread
     def _sending_msg(self):
         self._sending=True
+        self.LOGGER.info("Starting sending_msg")
+        
+        while self._sending:
+            if len(self._msgs_to_send)>0:
+                msg, hdrs, IP, level =self._msgs_to_send.pop(0)
+                self.LOGGER.debug(str(msg))
+                self.LOGGER.debug(str(hdrs))
+                # Define credentials and exchange name according to level
+                nuser = str(level+'ext_node')
+                np = self.ii_helper('node_data/access.bin', 4+int(level[1]))
+                send_ex = str(level+'_main_exchange')
+                # Call the sender method
+                send_credentials = pika.PlainCredentials(nuser, np)
+                self._sender(msg, new_hdrs, send_credentials, IP, send_ex)
+            else:
+                time.sleep(0.01) # prevent loop CPU usage
+
+    # Sender method
+    def _sender(msg, hdrs, send_credentials, IP, send_ex):
         # creation of sending connection:
         try:
-            credentials = pika.PlainCredentials(self._node_user, self._np)
-            parameters = pika.ConnectionParameters('localhost', self.PORT, self.VHOST, credentials,
+            parameters = pika.ConnectionParameters(IP, self.PORT, self.VHOST, send_credentials,
                                                    heartbeat=6)
             sendingconn = pika.BlockingConnection(parameters)
             sendingchan = sendingconn.channel()
         except pika.exceptions.AMQPConnectionError as err:
             logmsg=str("Impossible to create sending connection!".format(err))
-            LOGGER.critical(logmsg)
-            return
+            self.LOGGER.critical(logmsg)
 
-        LOGGER.info("Starting sending_msg")
-        
-        while self._sending:
-            try:
-                if len(self._msgs_to_send)>0:
-                    msg, hdrs =self._msgs_to_send.pop(0)
-                    LOGGER.debug(str(msg))
-                    LOGGER.debug(str(hdrs))
-                    new_hdrs={}
-                    # below is needed for Headers exchange to work correctly
-                    if (hdrs.get('dest') != None):
-                        new_hdrs['dest']=hdrs.get('dest')
-                    if (hdrs.get('type') != None):
-                        new_hdrs['type']=hdrs.get('type')
-                    if (hdrs.get('sender') != None):
-                        new_hdrs['sender']=hdrs.get('sender')
-                    if (hdrs.get('dest_all') != None):
-                        new_hdrs['dest_all']=hdrs.get('dest_all')
-                         
-                    # messages to reply queue
-                    if self._nodelevel == 'L3':
-                        #sends
-                        sendingchan.basic_publish(exchange='L3_main_exchange', routing_key='all',
-                                          properties=pika.BasicProperties(
-                                              headers=new_hdrs), body=(json.dumps(msg)))
-                    elif self._nodelevel == 'L2':
-                        if (hdrs.get('type') == 'getL2nodeslisttoL3'):
-                            #sends back to L3 initial sender TODO implement connection to L3
-                            pass
-##                            sendingchan.basic_publish(exchange='L3_main_exchange', routing_key='all',
-##                                              properties=pika.BasicProperties(
-##                                                  headers=new_hdrs), body=(json.dumps(msg)))
-                        if (hdrs.get('type') == 'getL2nodeslisttoL1'):
-                            pass
-                            #sends back to L1 initial sender TODO implement connection to L1
-##                            sendingchan.basic_publish(exchange='L1_main_exchange', routing_key='all',
-##                                              properties=pika.BasicProperties(
-##                                                  headers=new_hdrs), body=(json.dumps(msg)))
-                    elif self._nodelevel == 'L1':
-                        if (hdrs.get('type') == 'getL1nodeslisttoL2'):
-                            pass
-                            #sends back to L3 initial sender TODO implement connection to L2
-##                            sendingchan.basic_publish(exchange='L2_main_exchange', routing_key='all',
-##                                              properties=pika.BasicProperties(
-##                                                  headers=new_hdrs), body=(json.dumps(msg)))
-
-                    LOGGER.info(str("msg sent to reply queue: " + hdrs.get('type')))
-                else:
-                    sendingconn.sleep(0.1) # ensure heartbeat
-            except:
-                e = sys.exc_info()[1]
-                logmsg=str("<p>Problem while sending, trying to reinit connections...: %s</p>" % e )
-                LOGGER.error(logmsg)
-                try:
-                    try:
-                        sendingconn.close() #try to reinit
-                    except:
-                        pass
-                    time.sleep(5)
-                    self._sending_msg()
-                except:
-                    LOGGER.critical('Problem while sending and impossible to stop consuming')
-                break
+        # then actually sends message
+        try:
+            sendingchan.basic_publish(exchange=send_ex, routing_key='all',
+                                      properties=pika.BasicProperties(headers=hdrs),
+                                      body=(json.dumps(msg)))
+            self.LOGGER.info(str("msg sent: " + hdrs.get('type')))
+            sendingconn.close()
+        except:
+            e = sys.exc_info()[1]
+            logmsg=str("<p>ERROR: Problem while sending!!" % e )
+            self.LOGGER.error(logmsg)
             
-        # Closing connection (stopped manually)
-        if not self._sending:
-            try:
-                sendingconn.close()
-            except:
-                e = sys.exc_info()[1]
-                logmsg=str('Problem while closing send connection: %s</p>' % e)
-                LOGGER.warning(logmsg)
-
-#-----------------------------
-
-def main():
-    hdlr = logging.StreamHandler()
-    fhdlr = logging.FileHandler("log_node.txt", mode='w')
-    format = logging.Formatter('%(asctime)-15s %(levelname)s : %(message)s')
-    fhdlr.setFormatter(format)
-    hdlr.setFormatter(format)
-    LOGGER.addHandler(hdlr)
-    LOGGER.addHandler(fhdlr)
-    LOGGER.setLevel(logging.DEBUG)
-    
-    # Check arguments
-    if len(sys.argv) == 2:
-        if sys.argv[1] == 'L1' or sys.argv[1] == 'L2' or sys.argv[1] == 'L3' :
-            nodelevel=sys.argv[1]
-            consumer = ReconnectingNodeConsumer(nodelevel)
-            consumer.run()   
-    else:
-        print("Script needs 1 parameter (L1, L2, L3, clean or update). Please retry.")
-        exit()
-
-
-if __name__ == '__main__':
-    main()
