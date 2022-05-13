@@ -319,7 +319,7 @@ def keepconnection():
             channel.queue_declare(queue=client_uid, auto_delete=True)
             # TODO Add dest as a secretUID, not visible as a queue?
             channel.queue_bind(exchange='L3_main_exchange', queue=client_uid, routing_key='all',
-                               arguments={'x-match': 'any', 'service': 'chat'})
+                               arguments={'x-match': 'any', 'dest_uid': client_uid,'dest_all': 'clients'})
 
             channel.basic_qos(prefetch_count=1)           
             channel.basic_consume(queue=client_uid, on_message_callback=msgconsumer)
@@ -383,7 +383,7 @@ def msgconsumer(ch, method, properties, body):
         if hdrs.get('sender_uid') is not None and msg.get('pubk') is not None:
             contacts[hdrs.get('sender_uid')] = msg.get('pubk')
             LOGGER.debug('Updated contacts:' + str(contacts))
-        if msg['content'] != 'Done' :
+        if hdrs.get('dest_uid')==client_uid and msg['content'] != 'Done' :
             # send a puk message
             msg=initmsg()
             msgtype=0

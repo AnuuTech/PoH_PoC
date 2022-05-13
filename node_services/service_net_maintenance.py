@@ -37,13 +37,22 @@ class ServiceRunning(ReconnectingNodeConsumer):
         
     def _check_IP(self):
         # Check own IP and save into a file
-        own_ip = requests.get('https://api.ipify.org', timeout=self.REQ_TIMEOUT).text
-        if len(own_ip)>15:
-            own_ip= requests.get('https://ident.me').text
-        self._own_IP=own_ip
-        with open(self.IP_PATH, 'w') as ip_file:
-            ip_file.write(self._own_IP)
-            self.LOGGER.info("IP determined as being: "+self._own_IP)
+        own_ip=''
+        try:
+            own_ip = requests.get('https://api.ipify.org', timeout=self.REQ_TIMEOUT).text
+        except:
+            self.LOGGER.info("WARNING! Impossible to api ipify: " + str(sys.exc_info()[0]))
+            try:
+                own_ip= requests.get('https://ident.me').text
+            except:
+                self.LOGGER.info("WARNING! Impossible to identme: " + str(sys.exc_info()[0]))
+        if len(own_ip)>6:
+            self._own_IP=own_ip
+            with open(self.IP_PATH, 'w') as ip_file:
+                ip_file.write(self._own_IP)
+                self.LOGGER.info("IP determined as being: "+self._own_IP)
+        else:
+            self.LOGGER.warning("WARNING! Impossible to get own IP")
             
     def _ticking_actions(self):
         #super()._ticking_actions()
@@ -104,7 +113,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 #db_query = { "level": nodelevel, service_str:0} query for only one service type
                 db_query = { "level": nodelevel}
                 db_filter = {"IP_address":1, "uid":1, "_id":0, "services":1}
-                nodeslist=list(nodes_col.find(db_query, db_filter).max_time_ms(5000))
+                nodeslist=list(nodes_col.find(db_query, db_filter))
                 if len(nodeslist) == 0:
                     self.LOGGER.info("while updating nodes list of "+nodelevel+", DB access works but no input in DB received back!")
                 else:
