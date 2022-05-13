@@ -121,21 +121,17 @@ rabbitmqctl set_permissions -p "anuutech" layer_local $nodeperm $nodeperm $nodep
 rabbitmqctl delete_user 'guest'
 #FOR LEVEL 1
 if [ $nodelevel == 'L1' ]; then
-	#L2ext node
-	key=$((python3 ii_helper.py node_data/access.bin 6) 2>&1)
-	rabbitmqctl add_user L2ext_node $key
-	rabbitmqctl set_permissions -p "anuutech" L2ext_node "" "L1_main_exchange" "L1_main_exchange"
+	#L1ext_nodeext node
+	key=$((python3 ii_helper.py node_data/access.bin 5) 2>&1)
+	rabbitmqctl add_user L1ext_node $key
+	rabbitmqctl set_permissions -p "anuutech" L1ext_node "" "L1_main_exchange" "L1_main_exchange"
 fi
 #FOR LEVEL 2
 if [ $nodelevel == 'L2' ]; then
-	#L1ext node
-	key=$((python3 ii_helper.py node_data/access.bin 5) 2>&1)
-	rabbitmqctl add_user L1ext_node $key
-	rabbitmqctl set_permissions -p "anuutech" L1ext_node "" "L2_main_exchange" "L2_main_exchange"
-	#L3ext node
-	key=$((python3 ii_helper.py node_data/access.bin 7) 2>&1)
-	rabbitmqctl add_user L3ext_node $key
-	rabbitmqctl set_permissions -p "anuutech" L3ext_node "" "L2_main_exchange" "L2_main_exchange"
+	#L2ext node
+	key=$((python3 ii_helper.py node_data/access.bin 6) 2>&1)
+	rabbitmqctl add_user L2ext_node $key
+	rabbitmqctl set_permissions -p "anuutech" L2ext_node "" "L2_main_exchange" "L2_main_exchange"
 fi
 #FOR LEVEL 3
 if [ $nodelevel == 'L3' ]; then
@@ -143,14 +139,15 @@ if [ $nodelevel == 'L3' ]; then
 	key=$((python3 ii_helper.py node_data/access.bin 1) 2>&1)
 	rabbitmqctl add_user client_user $key
 	rabbitmqctl set_permissions -p "anuutech" client_user "client_*" "L3_main_exchange|client_*" "L3_main_exchange|client_*"
-	#L2ext node
-	key=$((python3 ii_helper.py node_data/access.bin 6) 2>&1)
-	rabbitmqctl add_user L2ext_node $key
-	rabbitmqctl set_permissions -p "anuutech" L2ext_node "" "L3_main_exchange" "L3_main_exchange"
+	#L3ext node
+	key=$((python3 ii_helper.py node_data/access.bin 7) 2>&1)
+	rabbitmqctl add_user L3ext_node $key
+	rabbitmqctl set_permissions -p "anuutech" L3ext_node "" "L3_main_exchange" "L3_main_exchange"
 fi
 unset key
 
 ## PREPARE AND START PYTHON SERVICES
+mkdir /home/logs/
 python3 node_services/prepare_services.py $nodelevel
 chmod +x start_node.sh
 chmod +x stop_node.sh

@@ -36,9 +36,9 @@ def ii_helper(fily, sel):
     return null
 
 lay_user='client_user'
-lay_pass=ii_helper('access.bin', '1')
-db_pass=ii_helper('access.bin', '12')
-nodeslist={} # UIDs and IPs of all L3 nodes
+lay_pass=ii_helper('node_data/access.bin', '1')
+db_pass=ii_helper('node_data/access.bin', '12')
+nodeslist={} # UIDs and IPs of all nodes with chat service
 defaultL3nodes=[]
 port=5672
 virtual_host='anuutech'
@@ -76,7 +76,7 @@ if not os.path.isfile(client_uid_path):
         uid_file.write(client_uid)
 else:
     with open(client_uid_path, 'r') as uid_file:
-        client_uid=uid_file.read()
+        client_uid=uid_file.read().strip()
 name='Mr No_Name'
 
 #init Logger
@@ -111,8 +111,8 @@ else:
 PRK=PKCS1_OAEP.new(private_key)
 
 #get default L3nodes
-defaultL3nodes_hosts=['at-clusterL3'+ii_helper('access.bin', '8'),
-                      'at-clusterL3b'+ii_helper('access.bin', '8')]
+defaultL3nodes_hosts=['at-clusterL3'+ii_helper('node_data/access.bin', '8'),
+                      'at-clusterL3b'+ii_helper('node_data/access.bin', '8')]
 for dgh in defaultL3nodes_hosts:
     try:
         defaultL3nodes.append(socket.gethostbyname(dgh))
@@ -127,9 +127,10 @@ if len(defaultL3nodes)==0:
 class App:
 
     def __init__(self, wind):
-        global varGr, mlist, name, nodeslist, chat_msg, dest_address
+        global varGr, mlist, name, nodeslist, chat_msg, dest_address, IPs, varGr31, IP_sel
         frame = tkinter.Frame(wind)
         getL3nodesList()
+        IPs=list(nodeslist.values())
 
         w0 = tkinter.Label(frame, text="UNIQUE ADDRESS:")
         w0.pack(side = tkinter.TOP, anchor = tkinter.W)
@@ -172,7 +173,24 @@ class App:
         b.pack(anchor=tkinter.W)
 
         varGr.set(0)
-               
+
+        w31 = tkinter.Label(frame, text="Select cluster node:")
+        w31.pack(side = tkinter.TOP, anchor = tkinter.W)
+
+        varGr31 = tkinter.StringVar()
+        if len(sys.argv) == 2:
+            if sys.argv[1] == 'local':
+                IPs.insert(0,'192.168.1.71')
+        for j in range(min(len(IPs),9)): # only up to 9 IPs shown
+                b = tkinter.Radiobutton(frame, variable=varGr31, text=IPs[j], value=j,
+                                        command=self.ipsel)
+                b.pack(anchor=tkinter.W)
+        varGr31.set(0)
+        if len(IPs)==0:
+            print("ERROR: no cluster nodes found...")
+            exit()
+        IP_sel = IPs[0] #TODO select best ping?
+   
         w8 = tkinter.Label(frame, text="AnuuChat message to send:")
         w8.pack(side = tkinter.TOP, anchor = tkinter.W)
        
@@ -234,8 +252,8 @@ class App:
         LOGGER.info(selection) 
 
     def ipsel(self):
-        global IP_sel
-        IP_sel=random.choice(list(nodeslist.values()))
+        global IP_sel, IPs, varGr31
+        IP_sel=IPs[int(varGr31.get())]
         selection = "You selected the ip " + str(IP_sel)
         print(selection)     
 
@@ -287,13 +305,11 @@ def disconn():
     
     
 def keepconnection():
-    global connected, connection, channel, nodeslist, IP_sel
+    global connected, connection, channel, IP_sel
     # Start connection keep loop
     connected=True
     
     while connected:
-        #select a random L3 node
-        IP_sel=random.choice(list(nodeslist.values()))
         try:
             LOGGER.info("starting connection for consuming with "+IP_sel)
             credentials = pika.PlainCredentials(lay_user,lay_pass)
@@ -303,7 +319,7 @@ def keepconnection():
             channel.queue_declare(queue=client_uid, auto_delete=True)
             # TODO Add dest as a secretUID, not visible as a queue?
             channel.queue_bind(exchange='L3_main_exchange', queue=client_uid, routing_key='all',
-                               arguments={'x-match': 'any', 'service': 'chat', 'service': 'PoH'})
+                               arguments={'x-match': 'any', 'service': 'chat'})
 
             channel.basic_qos(prefetch_count=1)           
             channel.basic_consume(queue=client_uid, on_message_callback=msgconsumer)
@@ -332,7 +348,7 @@ def keepconnection():
         except KeyboardInterrupt:
             connected=False
             break
-        except:
+        except FileNotFoundError:
             e = sys.exc_info()[1]
             logmsg=( "<p>WARNING! Unidentified error, trying to reinit...: %s</p>" % e )
             LOGGER.info(logmsg)
@@ -347,25 +363,25 @@ def msgconsumer(ch, method, properties, body):
     LOGGER.info(hdrs)
     msg= json.loads(body.decode("utf-8"))
     LOGGER.info(msg)
-    if hdrs.get('type')=='CHAT':
+    if hdrs.get('type')=='chat':
         LOGGER.info("AnuuChat Received " + msg['content'])
-        if hdrs.get('sender')==client_uid and hdrs.get('dest_all')=='clients':
+        if hdrs.get('sender_uid')==client_uid and hdrs.get('dest_all')=='clients':
             mlist.insert(0,'AnuuChat: Own general message received back: "' + str(msg['content']+'"'))
-        elif hdrs.get('dest')==client_uid:
+        elif hdrs.get('dest_uid')==client_uid:
             #Private message
             decrypted_msg = PRK.decrypt(base64.b64decode(msg['content'])).decode()
-            xm="AnuuChat: Private encrypted message received from "+str(msg['sender_name'])+ ': "' + str(decrypted_msg+'"')
+            xm="AnuuChat: Private encrypted message received from "+str(msg['username'])+ ': "' + str(decrypted_msg+'"')
             mlist.insert(0,str(xm))
-        else:
+        elif hdrs.get('sender_uid').strip() != client_uid.strip():
             #General message
-            xm="AnuuChat: General message received from "+str(msg['sender_name'])+ ': "' + str(msg['content']+'"')
+            xm="AnuuChat: General message received from "+str(msg['username'])+ ': "' + str(msg['content']+'"')
             mlist.insert(0,str(xm))
             
     elif hdrs.get('type')=='CHAT-PUK':
-        xm="AnuuChat: Encryption request from "+str(msg['sender_name'])
+        xm="AnuuChat: Encryption request from "+str(msg['username'])
         mlist.insert(0,str(xm))
-        if hdrs.get('sender') is not None and msg.get('pubk') is not None:
-            contacts[hdrs.get('sender')] = msg.get('pubk')
+        if hdrs.get('sender_uid') is not None and msg.get('pubk') is not None:
+            contacts[hdrs.get('sender_uid')] = msg.get('pubk')
             LOGGER.debug('Updated contacts:' + str(contacts))
         if msg['content'] != 'Done' :
             # send a puk message
@@ -373,11 +389,14 @@ def msgconsumer(ch, method, properties, body):
             msgtype=0
             msg['pubk']=public_key.exportKey('PEM').decode()
             msg['content']='Done'
-            msg['sender_name']=name
-            headers={'dest': hdrs.get('sender'), 'type': 'CHAT-PUK', 'sender': client_uid}
+            msg['username']=name
+            headers=initheaders()
+            headers['service']='chat'
+            headers['dest_uid']=hdrs.get('sender_uid')
+            headers['type']='CHAT-PUK'
             send_msg(headers, msg, msgtype)
 
-    elif hdrs.get('type')=='HMES' and hdrs.get('dest')==client_uid:
+    elif hdrs.get('type')=='HMES' and hdrs.get('dest_uid')==client_uid:
         # get all infos from DB
         db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
         db_client = pymongo.MongoClient(db_url)
@@ -419,10 +438,10 @@ def msgconsumer(ch, method, properties, body):
     msg_handling=msg_waiting.copy()
     if len(msg_handling) >0:
         for item in msg_handling:
-            if item[0]['dest'] in contacts.keys():
+            if item[0]['dest_uid'] in contacts.keys():
                 msg_waiting.remove(item)
                 #Encrypt and send
-                enc_key=PKCS1_OAEP.new(RSA.importKey(contacts[item[0]['dest']].encode()))
+                enc_key=PKCS1_OAEP.new(RSA.importKey(contacts[item[0]['dest_uid']].encode()))
                 item[1]['content']= base64.b64encode(enc_key.encrypt(item[1]['content'].encode())).decode()
                 send_msg(item[0],item[1],item[2])
 
@@ -434,14 +453,20 @@ def prepare_msg():
         # CHAT
         if int(varGr.get()) == 0:
             msgtype=0
-            msg['sender_name']=name
+            msg['username']=name
             if len(dest_address) == 0:
                 #General message
-                headers={'dest_all': 'clients', 'type': 'CHAT', 'sender': client_uid}
+                headers=initheaders()
+                headers['service']='chat'
+                headers['dest_all']='clients'
+                headers['type']='chat'
                 msg['content']=chat_msg
             else:
                 #Private message
-                headers={'dest': dest_address, 'type': 'CHAT', 'sender': client_uid}
+                headers=initheaders()
+                headers['service']='chat'
+                headers['dest_uid']=dest_address
+                headers['type']='chat'
                 if dest_address in contacts.keys():
                     enc_key=PKCS1_OAEP.new(RSA.importKey(contacts[dest_address].encode()))
                     msg['content']= base64.b64encode(enc_key.encrypt(chat_msg.encode())).decode()
@@ -452,7 +477,7 @@ def prepare_msg():
                     temp.append(msg.copy())
                     temp.append(0)
                     msg_waiting.append(temp)
-                    headers={'dest': dest_address, 'type': 'CHAT-PUK', 'sender': client_uid}
+                    headers['type']='CHAT-PUK'
                     msg['pubk']=public_key.exportKey('PEM').decode()
                     msg['content']= 'PUK attached'
 
@@ -477,11 +502,12 @@ def prepare_msg():
 
 
 def send_msg(headers, msg, msgtype):
-    global connected, dest_address, name
+    global connected, dest_address, name, IP_sel
     if not connected:
         mlist.insert(0,"Impossible to send msg, not connected!") 
         return
-    
+    # Ensure all outgoing messages have the node IP well set
+    headers['sender_node_IP']=IP_sel
     credentials = pika.PlainCredentials(lay_user,lay_pass)
     parameters=pika.ConnectionParameters(IP_sel, port,virtual_host, credentials)
     connection2 = pika.BlockingConnection(parameters)
@@ -492,7 +518,7 @@ def send_msg(headers, msg, msgtype):
                                properties=pika.BasicProperties(headers=headers),
                                body=(json.dumps(msg)))
         if msgtype == 0:
-            if headers.get('type')=='CHAT':
+            if headers.get('type')=='chat':
                 mlist.insert(0,"AnuuChat: Message sent.")
             else:
                 mlist.insert(0,"AnuuChat: Encryption request sent.")
@@ -512,76 +538,50 @@ def send_msg(headers, msg, msgtype):
 def initmsg():
     msg_empty = {
     "uid": randomstring(12),
-    "initial_sender": client_uid,
-    "final_receiver": "",
+    "username": "",
     "content": "some client data",
     "content_hash": "used for HMES",
     "pubk": "empty"
     }
     return msg_empty
-            
+
+def initheaders():
+    basic_headers = {
+        'sender_uid': client_uid,
+        'sender_node_IP': '',
+        'dest_uid': '',
+        'dest_IP': '',
+        'dest_all': '',
+        'service': '',
+        'type': '',
+        'hop': 0,
+        'retry': 0
+        }
+    return basic_headers
+
+
 def getL3nodesList():
-    global connection, connection2, channel, channel2, nodeslist
+    global nodeslist, defaultL3nodes
+    #print(defaultL3nodes)
     timestamp_config=time.time()
     waiting=False
     while len(nodeslist)==0:
-        if (time.time()-timestamp_config > 15):
-            LOGGER.info( "ERROR: impossible to get L3nodes list, timeout")
-            break
-        if waiting == False:
-            try:
-                # Random selection of a L3nodes node
-                random.shuffle(defaultL3nodes)
-                # Start connection
-                credentials = pika.PlainCredentials(lay_user,lay_pass)
-                parameters=pika.ConnectionParameters(defaultL3nodes[0], port,virtual_host, credentials)
-                connection = pika.BlockingConnection(parameters)
-                connection2 = pika.BlockingConnection(parameters)
-                channel=connection.channel()
-                channel.queue_declare(queue=client_uid, auto_delete=True)
-                channel.queue_bind(exchange='L3_main_exchange', queue=client_uid, routing_key='all',
-                               arguments={'x-match': 'any', 'dest': client_uid})
-                t2 = threading.Thread(target=configconsumer)
-                t2.start()
-                threads.append(t2)
-
-                channel2=connection2.channel()
-                msg=initmsg()
-                channel2.basic_publish(exchange='L3_main_exchange', routing_key='all',
-                                       properties=pika.BasicProperties(
-                                           headers={'dest': 'main', 'type': 'reqL3nodeslist', 'sender': client_uid}),
-                                       body=(json.dumps(msg)))
-                LOGGER.info("msg sent: req entrypoints list " + client_uid)
-                LOGGER.info("L3nodes list request sent to " + defaultL3nodes[0])
-                waiting = True
-                time.sleep(2)
-            except:
-                waiting=False
-                e = sys.exc_info()[0]
-                LOGGER.info( "Problem requesting Entry-points list, retrying: %s" % e )
-                LOGGER.info(e)
-                cleanall()
-                
-    LOGGER.info( "List of Entry-points obtained: %s" %str(nodeslist))
-    cleanall()
-
-def configmsgconsumer(ch, method, properties, body):
-    global nodeslist
-    hdrs=properties.headers
-    LOGGER.info(hdrs)
-    if (hdrs.get('type')=='sentL3nodeslist' and hdrs.get('sender') == client_uid):
-        msg=json.loads(body.decode("utf-8"))
-        nodeslist=json.loads(msg['content'])
-    ch.basic_ack(delivery_tag = method.delivery_tag)
-
-def configconsumer():
-    global channel
-    channel.basic_consume(queue=client_uid, on_message_callback=configmsgconsumer)
-    try:
-        channel.start_consuming()
-    except:
-        e = sys.exc_info()[0]
-        LOGGER.info( "<p>Problem while configconsuming: %s</p>" % e )
+        try:
+            random.shuffle(defaultL3nodes)
+            IP_sel=defaultL3nodes[0]
+            # get all infos from DB
+            db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
+            db_client = pymongo.MongoClient(db_url)
+            at_db = db_client["AnuuTechDB"]
+            nodes_col = at_db["nodes"]
+            db_query = { "level": 'L3'}
+            db_filter = {"uid":1, "IP_address":1, "_id":0, "services":1}
+            templist=list(nodes_col.find(db_query, db_filter).max_time_ms(5000))
+            nodeslist={n['uid']:n['IP_address'] for n in templist }# if (n['services']['net_storage'] == 1}
+        except:
+            time.sleep(1)
+            e = sys.exc_info()[1]
+            LOGGER.info( "<p>Error while trying to get nodes from DB, retrying...: %s</p>" % e )
 
 def cleanall():
     # clean all connections

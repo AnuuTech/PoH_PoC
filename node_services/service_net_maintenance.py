@@ -13,14 +13,14 @@ import urllib
 import pika
 
 class ServiceRunning(ReconnectingNodeConsumer):
-    SERVICES_PATH='node_services/services.conf'
     
     def _msg_process(self, msg, hdrs):
         super()._msg_process(msg, hdrs)
         self.LOGGER.info("Entered extended msg process method")
         return True
 
-    def _initnode(self):            
+    def _initnode(self):
+        self._check_IP()
         # Update list of nodes in the actual and lower layer and save files
         self._nodeslist = self._update_nodeslist(self._nodeslist, self._nodelevel)
         self._nodeslist_lower = self._update_lowerlayer_nodeslist()
@@ -46,9 +46,20 @@ class ServiceRunning(ReconnectingNodeConsumer):
             self.LOGGER.info("IP determined as being: "+self._own_IP)
             
     def _ticking_actions(self):
-        super()._ticking_actions()
-        self._nodeslist = self._update_nodeslist(self._nodeslist, self._nodelevel)
-        self._nodeslist_lower = self._update_lowerlayer_nodeslist()
+        #super()._ticking_actions()
+        self._check_IP()
+        #update nodeslists
+        updated=self._update_nodeslist(self._nodeslist, self._nodelevel)
+        if updated is not None:
+            self._nodeslist = updated
+        updated_low = self._update_lowerlayer_nodeslist()
+        if updated_low is not None:
+            self._nodeslist_lower = updated_low
+        #write nodeslists into files
+        with open(self.NODESLIST_PATH, 'w') as nodes_file:
+            nodes_file.write(json.dumps(self._nodeslist))
+        with open(self.NODESLIST_LOWER_PATH, 'w') as nodes_file:
+            nodes_file.write(json.dumps(self._nodeslist_lower))
         self._net_check() 
 
     def _update_nodeslist(self, nodeslist, nodelevel):     
@@ -84,23 +95,23 @@ class ServiceRunning(ReconnectingNodeConsumer):
             IP_sel=nodes_ns[0]['IP_address']
 
         try:    
-            # query the list of nodes from DB   
+            # query the list of nodes from DB
             db_url='mongodb://admin:' + urllib.parse.quote(self._db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
-            db_client = pymongo.MongoClient(db_url)
-            at_db = db_client["AnuuTechDB"]
-            nodes_col = at_db["nodes"]
-            #service_str='services.'+self._service
-            #db_query = { "level": nodelevel, service_str:0} query for only one service type
-            db_query = { "level": nodelevel}
-            db_filter = {"IP_address":1, "uid":1, "_id":0, "services":1}
-            nodeslist=list(nodes_col.find(db_query, db_filter).max_time_ms(5000))
-            if len(nodeslist) == 0:
-                self.LOGGER.info("while updating nodes list of "+nodelevel+", DB access works but no input in DB received back!")
-            else:
-                # update nodes list
-                self.LOGGER.info("The list of nodes in the layer "+nodelevel+" has been updated: " + str(nodeslist))
+            with pymongo.MongoClient(db_url) as db_client:
+                at_db = db_client["AnuuTechDB"]
+                nodes_col = at_db["nodes"]
+                #service_str='services.'+self._service
+                #db_query = { "level": nodelevel, service_str:0} query for only one service type
+                db_query = { "level": nodelevel}
+                db_filter = {"IP_address":1, "uid":1, "_id":0, "services":1}
+                nodeslist=list(nodes_col.find(db_query, db_filter).max_time_ms(5000))
+                if len(nodeslist) == 0:
+                    self.LOGGER.info("while updating nodes list of "+nodelevel+", DB access works but no input in DB received back!")
+                else:
+                    # update nodes list
+                    self.LOGGER.info("The list of nodes in the layer "+nodelevel+" has been updated: " + str(nodeslist))
         except:
-            self.LOGGER.warning("WARNING! Impossible to reach the DB: " + str(sys.exc_info()[0]))
+            self.LOGGER.warning("WARNING! Impossible to reach the DB on "+str(IP_sel)+" "+ str(sys.exc_info()[0]))
         return nodeslist
 
     def _update_lowerlayer_nodeslist(self):
@@ -114,46 +125,23 @@ class ServiceRunning(ReconnectingNodeConsumer):
     
     def _net_check(self):
         # Create/Update infos on AnuuTechDB
-        IP_sel=''
-        # Update IP
-        self._check_IP()
-        # Get list of services
+        # Prepare query in good format
+        pem = self._PUBKEY.exportKey('PEM')
+        db_query = { "uid": self._uid }
+        db_values_toset = {"$set":{"pubkey": pem, "level": self._nodelevel, "last_view" : time.time(),
+                                   "platform": platform.system(), "platform_version": platform.version(),
+                                   "platform_release": platform.release(),# does not work: "cpu_maxspeed_MhZ": psutil.cpu_freq()[2],
+                                   "cpu_avg_usage_percent": (psutil.getloadavg()[0]/ psutil.cpu_count() * 100),
+                                   "mem_total": psutil.virtual_memory()[0], "mem_percent_used": psutil.virtual_memory()[2],
+                                   "disk_total": psutil.disk_usage('/')[0], "disk_percent_used": psutil.disk_usage('/')[3],
+                                   "IP_address": self._own_IP, "SW_version": self.SW_VERSION}}
+        self._updateDB('nodes', db_query, db_values_toset)
+        # Additional update
         serv_list={}
         with open(self.SERVICES_PATH, 'r') as serv_file:
             serv_list=json.load(serv_file)
-            self.LOGGER.info("List of services configured: " + str(serv_list))
-        # Prepare connection to DB
-        # Check if service is available on node
-        if serv_list['net_storage'] == 1:
-            IP_sel='localhost' # use the local service
-        else:
-            # Select a node from the existing list of nodes
-            nodes_ns=[n for n in self._nodeslist if n['services']['net_storage'] == 1]#TODO may also check on lower layer nodes!
-            if len(nodes_ns) == 0:
-                self.LOGGER.warning("No node with net storage service is available, impossible to update own node entry in DB!!")
-            else:           
-                random.shuffle(nodes_ns)
-                IP_sel=nodes_ns[0]['IP_address']
-        if len(IP_sel)>0:
-            db_url='mongodb://admin:' + urllib.parse.quote(self._db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
-            db_client = pymongo.MongoClient(db_url)
-            at_db = db_client["AnuuTechDB"]
-            nodes_col = at_db["nodes"]
-            # Prepare query in good format
-            pem = self._PUBKEY.exportKey('PEM')
-            db_query = { "uid": self._uid }
-            db_values_toset = {"$set":{"pubkey": pem, "level": self._nodelevel, "last_view" : time.time(),
-                                       "platform": platform.system(), "platform_version": platform.version(),
-                                       "platform_release": platform.release(),# does not work: "cpu_maxspeed_MhZ": psutil.cpu_freq()[2],
-                                       "cpu_avg_usage_percent": (psutil.getloadavg()[0]/ psutil.cpu_count() * 100),
-                                       "mem_total": psutil.virtual_memory()[0], "mem_percent_used": psutil.virtual_memory()[2],
-                                       "disk_total": psutil.disk_usage('/')[0], "disk_percent_used": psutil.disk_usage('/')[3],
-                                       "IP_address": self._own_IP, "SW_version": self.SW_VERSION}}
-            db_values_toset2 = {"$set":{"services":serv_list}}
-            # Update/Insert values, using upsert = True
-            nodes_col.update_one(db_query, db_values_toset, True)
-            nodes_col.update_one(db_query, db_values_toset2, True)
-            self.LOGGER.info("Node information updated on DB, IP = " + self._own_IP)
+        db_values_toset2 = {"$set":{"services":serv_list}}
+        self._updateDB('nodes', db_query, db_values_toset2)
 
         # Ensure local exchange exists
         try:
@@ -182,12 +170,7 @@ def main():
 
             # Create Instance and start the service
             consumer = ServiceRunning(nodelevel, 'net_maintenance')
-            try:
-                consumer.run()
-                pass
-            except:
-                with open('net_maintenance_dump.file','w') as dump_file:
-                    dump_file.write("Uncatched error! Impossible to reach the DB: " + str(sys.exc_info()[1]))
+            consumer.run()
     else:
         print("Script needs 1 parameter (L1, L2 or L3). Please retry.")
         exit()

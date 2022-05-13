@@ -26,7 +26,7 @@ def starting(nodelevel):
     with open(LAUNCHER_PATH, 'w') as lau_file:
         for serv in serv_list.keys():
             if serv_list[serv] == 1:
-                line='nohup python3 -u node_services/service_'+serv+'.py '+nodelevel+' > /dev/null 2>&1 &\n'
+                line='nohup python3 -u node_services/service_'+serv+'.py '+nodelevel+' > /home/logs/output_'+serv+'.log &\n'
                 lau_file.write(line)
                 line='echo $! > node_services/python_pid_'+serv+'.file\n'
                 lau_file.write(line)
@@ -41,6 +41,7 @@ def starting(nodelevel):
                     lau_file.write(line)
                     line='done\n'
                     lau_file.write(line)
+                    
 
     # Prepare stopper
     with open(STOPPER_PATH, 'w') as lau_file:
@@ -52,6 +53,7 @@ def starting(nodelevel):
                 lau_file.write(line)
                 line='echo python process $pid stopping...\n'
                 lau_file.write(line)
+                
             
 def main():
     # Check arguments

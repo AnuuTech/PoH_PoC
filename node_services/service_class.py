@@ -320,6 +320,7 @@ class ReconnectingNodeConsumer(object):
     NODESLIST_LOWER_PATH=MAIN_PATH+'node_data/nodeslist_lower.file'
     UID_PATH=MAIN_PATH+'node_data/node_uid.file'
     PS_PATH=MAIN_PATH+'node_data/ps_loc.file'
+    SERVICES_PATH='node_services/services.conf'
 
     #helper functions
     def ii_helper(self, fily, sel):
@@ -373,20 +374,19 @@ class ReconnectingNodeConsumer(object):
                 self.LOGGER.debug('RSA keys sucessfully loaded.')
         self._PUBKEY=public_key
         self._PRIVKEY=private_key
-        
-        #Ensure existing log file
-        self.LOGGER.info("Service "+self._service +" has started\n")
 
     def run(self):
         #LOGGER init
         hdlr = logging.StreamHandler()
-        fhdlr = logging.FileHandler("log_"+self._service+".txt", mode='w')
+        fhdlr = logging.FileHandler("logs/log_"+self._service+".txt", mode='w')
         format = logging.Formatter('%(asctime)-15s %(levelname)s : %(message)s')
         fhdlr.setFormatter(format)
         hdlr.setFormatter(format)
         self.LOGGER.addHandler(hdlr)
         self.LOGGER.addHandler(fhdlr)
         self.LOGGER.setLevel(logging.DEBUG)
+        #Ensure existing log file
+        self.LOGGER.info("Service "+self._service +" has started\n")
 
         #update password of node
         with open(self.PS_PATH, 'r') as ps_file:
@@ -452,12 +452,12 @@ class ReconnectingNodeConsumer(object):
             with open(self.IP_PATH, 'r') as ip_file:
                 self._own_IP=ip_file.read().strip()
 
-        #nodelist read from uid
+        #nodelist read from file
         if os.path.isfile(self.NODESLIST_PATH):
             with open(self.NODESLIST_PATH, 'r') as nodes_file:
                 self._nodeslist=json.load(nodes_file)
 
-        #lower nodelist read from uid
+        #lower nodelist read from file
         if os.path.isfile(self.NODESLIST_LOWER_PATH):
             with open(self.NODESLIST_LOWER_PATH, 'r') as nodes_file:
                 self._nodeslist_lower=json.load(nodes_file) 
@@ -508,7 +508,7 @@ class ReconnectingNodeConsumer(object):
             self.LOGGER.info("Received decode: " + str(msg))
             hdrs=properties.headers
             self.LOGGER.debug(hdrs)
-            return (_msg_process(msg, hdrs))
+            return (self._msg_process(msg, hdrs))
         except:
             e = sys.exc_info()[1]
             logmsg=str("<p>Problem while consuming: %s</p>" % e )
@@ -530,14 +530,15 @@ class ReconnectingNodeConsumer(object):
 
     def _initheaders(self):
         basic_headers = {
-            'client_uid': '',
-            'client_node_IP': '',
             'sender_uid': self._uid,
-            'sender_IP': self._own_IP,
-            'dest': '',
+            'sender_node_IP': self._own_IP,
+            'dest_uid': '',
+            'dest_IP': '',
             'dest_all': '',
             'service': self._service,
-            'type': ''
+            'type': '',
+            'hop' : 0,
+            'retry': 0
             }
         return basic_headers
                 
@@ -558,31 +559,88 @@ class ReconnectingNodeConsumer(object):
                 send_ex = str(level+'_main_exchange')
                 # Call the sender method
                 send_credentials = pika.PlainCredentials(nuser, np)
-                self._sender(msg, new_hdrs, send_credentials, IP, send_ex)
+                self._sender(msg, hdrs, send_credentials, IP, send_ex, level)
             else:
                 time.sleep(0.01) # prevent loop CPU usage
 
+
     # Sender method
-    def _sender(msg, hdrs, send_credentials, IP, send_ex):
+    # TODO ensure delivery! https://github.com/pika/pika/blob/master/examples/confirmation.py
+    def _sender(self, msg, hdrs, send_credentials, IP, send_ex, level):
         # creation of sending connection:
         try:
             parameters = pika.ConnectionParameters(IP, self.PORT, self.VHOST, send_credentials,
                                                    heartbeat=6)
             sendingconn = pika.BlockingConnection(parameters)
             sendingchan = sendingconn.channel()
-        except pika.exceptions.AMQPConnectionError as err:
-            logmsg=str("Impossible to create sending connection!".format(err))
-            self.LOGGER.critical(logmsg)
-
-        # then actually sends message
-        try:
             sendingchan.basic_publish(exchange=send_ex, routing_key='all',
                                       properties=pika.BasicProperties(headers=hdrs),
                                       body=(json.dumps(msg)))
             self.LOGGER.info(str("msg sent: " + hdrs.get('type')))
             sendingconn.close()
         except:
+            try:
+                sendingconn.close()
+            except:
+                pass
             e = sys.exc_info()[1]
-            logmsg=str("<p>ERROR: Problem while sending!!" % e )
-            self.LOGGER.error(logmsg)
-            
+            # Try to handle the error
+            try:
+                # check number of retries
+                if hdrs['retry']>2:
+                    logmsg=str("ERROR: msg "+msg['uid']+ " impossible to send error when create sending connection with 3 retries! %s" %str(e))
+                    self.LOGGER.error(logmsg)
+                # retry with a random new node
+                else: 
+                    logmsg=str("ERROR: msg "+msg['uid']+ " impossible to create connection! will retry... %s" %str(e))
+                    self.LOGGER.error(logmsg)
+                    hdrs['retry']=hdrs['retry']+1
+                    # Get a node with same service
+                    if level == self._nodelevel:
+                        nodes_s=[n for n in self._nodeslist if (n['services'][hdrs['service']] == 1)]
+                    else:
+                        nodes_s=[n for n in self._nodeslist_lower if (n['services'][hdrs['service']] == 1)]
+                    random.shuffle(nodes_s)
+                    if len(nodes_s) < 2:
+                        self.LOGGER.error("No other node with service "+hdrs['service']+" is available, impossible to process msg "+msg['uid'])
+                    else:
+                        IP=nodes_s[0]['IP_address']
+                        self.LOGGER.info("Msg "+msg['uid']+" retrying with "+hdrs['service']+" on IP: "+nodes_s[0]['IP_address'])
+                        self._msgs_to_send.append([msg, hdrs, IP, level ])
+            except:
+                e = sys.exc_info()[1]
+                self.LOGGER.critical('Impossible to send a message, message discarded! %s' %str(e))
+
+    # Generic method to update infos on AnuuTechDB
+    def _updateDB(self, collects, db_query, db_values_toset ):
+        try:
+            IP_sel=''
+            # Get list of services on the nodes
+            serv_list={}
+            with open(self.SERVICES_PATH, 'r') as serv_file:
+                serv_list=json.load(serv_file)
+                self.LOGGER.info("List of services configured: " + str(serv_list))
+            # Prepare connection to DB
+            # Check if service is available on node
+            if serv_list['net_storage'] == 1:
+                IP_sel='localhost' # use the local service
+            else:
+                # Select a node from the existing list of nodes
+                nodes_ns=[n for n in self._nodeslist if n['services']['net_storage'] == 1]#TODO may also check on lower layer nodes!
+                if len(nodes_ns) == 0:
+                    self.LOGGER.warning("No node with net storage service is available, impossible to update own node entry in DB!!")
+                else:           
+                    random.shuffle(nodes_ns)
+                    IP_sel=nodes_ns[0]['IP_address']
+            if len(IP_sel)>0:
+                db_url='mongodb://admin:' + urllib.parse.quote(self._db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
+                with pymongo.MongoClient(db_url) as db_client:
+                    at_db = db_client["AnuuTechDB"]
+                    nodes_col = at_db[collects]
+                    # Update/Insert values, using upsert = True
+                    nodes_col.update_one(db_query, db_values_toset, True)
+                    self.LOGGER.debug(str(db_values_toset))
+                    self.LOGGER.info("Values updated on DB, own IP = " + self._own_IP)
+        except:    
+            e = sys.exc_info()[1]
+            self.LOGGER.error('Impossible to updateDB!!  %s' %str(e))
