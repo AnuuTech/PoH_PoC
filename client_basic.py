@@ -414,7 +414,7 @@ def msgconsumer(ch, method, properties, body):
             headers['type']='CHAT-PUK'
             send_msg(headers, msg, msgtype)
 
-    elif (hdrs.get('type')=='PoH_L3_R1' and hdrs.get('dest_uid')==client_uid):
+    elif (hdrs.get('type')=='POH_L3_R1_DONE' and hdrs.get('dest_uid')==client_uid):
         # get all infos from DB
         random.shuffle(defaultL3nodes)
         IP_DB=defaultL3nodes[0] # TODO get all net storage available nodes
@@ -514,7 +514,7 @@ def prepare_msg():
                 headers=initheaders()
                 headers['service']='poh'
                 headers['dest_uid']=node_uid
-                headers['type']='PoH_L3_R1'
+                headers['type']='POH_L3_R1'
                 LOGGER.info("msg prepared to be sent: "+str(headers))
             else:
                 LOGGER.info("Cannot send PoH msg, no node with service active found!")

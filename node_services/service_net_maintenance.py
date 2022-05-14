@@ -97,12 +97,21 @@ class ServiceRunning(ReconnectingNodeConsumer):
             IP_sel=random.choice(defaultnodesIP)
         else:
             # Select randomly from the existing list of nodes
-            nodes_ns=[n for n in nodeslist if n['services']['net_storage'] == 1]
+            # nodes_ns=[n for n in nodeslist if n['services']['net_storage'] == 1] Replaced by iteration loop to avoid errors
+            nodes_ns=[]
+            for n in nodeslist:
+                if 'services' in n:
+                    if 'net_storage' in n['services']:
+                        if n['services']['net_storage'] == 1:
+                            nodes_ns.append(n)
             if len(nodes_ns) == 0:
                 self.LOGGER.warning("ERROR! No nodes with net_storage service are available! will retry at next ticking.")
-                return nodeslist
+                # force to re-use the default nodes
+                self._nodeslist={}
+                return
             random.shuffle(nodes_ns)
-            IP_sel=nodes_ns[0]['IP_address']
+            if 'IP_address' in nodes_ns[0]:
+                IP_sel=nodes_ns[0]['IP_address']
 
         try:    
             # query the list of nodes from DB
@@ -117,12 +126,22 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 nodeslist=list(nodes_col.find(db_query, db_filter))
                 # check if some nodes are not responding anymore (at node level)
                 if nodelevel == self._nodelevel:
-                    nodes_down=[n for n in nodeslist if (time.time()-n['last_view']) > self._NODE_DOWNTIME_LIMIT]
+                    #nodes_down=[n for n in nodeslist if (time.time()-n['last_view']) > self._NODE_DOWNTIME_LIMIT] Replaced by iteration loop to avoir errors
+                    nodes_down=[]
+                    for n in nodeslist:
+                        if 'last_view' in n:
+                            if (time.time()-n['last_view'])> self._NODE_DOWNTIME_LIMIT:
+                                nodes_down.append(n)
+                        else:
+                            nodes_down.append(n)# add to delete because node does not have a last view
                     # delete nodes down from DB   
                     for n in nodes_down:
-                        db_query = { 'uid': n['uid']}
-                        nodes_col.delete_many(db_query) # usage of delete_many instead of delete_one to delete duplciate if any
-                        self.LOGGER.info("Deleted node "+n['uid']+" from DB, not responding for more than " + str(self._NODE_DOWNTIME_LIMIT)+"s")
+                        if 'uid' in n:
+                            db_query = { 'uid': n['uid']}
+                            nodes_col.delete_many(db_query) # usage of delete_many instead of delete_one to delete duplciate if any
+                            self.LOGGER.info("Deleted node "+n['uid']+" from DB, not responding for more than " + str(self._NODE_DOWNTIME_LIMIT)+"s")
+                        else:
+                            self.LOGGER.info("Impossible to delete node, no uid exists!")
                     # update nodeslist
                     nodeslist=[n for n in nodeslist if n not in nodes_down]
             if len(nodeslist) == 0:

@@ -28,11 +28,18 @@ class ServiceRunning(ReconnectingNodeConsumer):
         elif (hdrs['dest_all'] == 'clients' or hdrs['dest_uid'].startswith('client_')) and hdrs['hop'] < 1: # hop only once
             hdrs['hop']=hdrs['hop']+1
             # send to all nodes with chat service
-            nodes_cs=[n for n in self._nodeslist if n['services']['chat'] == 1]
+            # nodes_cs=[n for n in self._nodeslist if n['services']['chat'] == 1] Replaced by iteration loop to avoid errors
+            nodes_cs=[]
+            for n in self._nodeslist:
+                if 'services' in n:
+                    if 'chat' in n['services']:
+                        if (n['services']['chat'] == 1):
+                            nodes_cs.append(n)
             self.LOGGER.info("CHAT broadcast msg "+msg['uid']+" will be forwarded to: "+str(len(nodes_cs))+" nodes.")
             for n in nodes_cs:
-                if n['IP_address'] != self._own_IP:
-                    self._msgs_to_send.append([msg, hdrs, n['IP_address'], 'L3'])
+                if 'IP_address' in n:
+                    if n['IP_address'] != self._own_IP:
+                        self._msgs_to_send.append([msg, hdrs, n['IP_address'], 'L3'])
                                  
 ##        elif hdrs['dest_uid'].startswith('client_'): NOT NEEDED IF CLIENTS HAVE TO ONLY CONNECT TO NODES WITH CHAT SERVICE
 ##            # if dest was connected to the node he would have received the msg,

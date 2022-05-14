@@ -597,9 +597,21 @@ class ReconnectingNodeConsumer(object):
                     hdrs['retry']=hdrs['retry']+1
                     # Get a node with same service
                     if level == self._nodelevel:
-                        nodes_s=[n for n in self._nodeslist if (n['services'][hdrs['service']] == 1)]
+                        #nodes_s=[n for n in self._nodeslist if (n['services'][hdrs['service']] == 1)] Replaced by iteration loop to avoid errors
+                        nodes_s=[]
+                        for n in self._nodeslist:
+                            if 'services' in n:
+                                if hdrs['service'] in n['services']:
+                                    if (n['services'][hdrs['service']] == 1):
+                                        nodes_s.append(n)
                     else:
-                        nodes_s=[n for n in self._nodeslist_lower if (n['services'][hdrs['service']] == 1)]
+                        #nodes_s=[n for n in self._nodeslist_lower if (n['services'][hdrs['service']] == 1)]
+                        for n in self._nodeslist_lower:
+                            if 'services' in n:
+                                if hdrs['service'] in n['services']:
+                                    if (n['services'][hdrs['service']] == 1):
+                                        nodes_s.append(n)
+                        
                     random.shuffle(nodes_s)
                     if len(nodes_s) < 2:
                         self.LOGGER.error("No other node with service "+hdrs['service']+" is available, impossible to process msg "+msg['uid'])
@@ -622,11 +634,18 @@ class ReconnectingNodeConsumer(object):
                 self.LOGGER.info("List of services configured: " + str(serv_list))
             # Prepare connection to DB
             # Check if service is available on node
-            if serv_list['net_storage'] == 1:
-                IP_sel='localhost' # use the local service
-            else:
-                # Select a node from the existing list of nodes
-                nodes_ns=[n for n in self._nodeslist if n['services']['net_storage'] == 1]#TODO may also check on lower layer nodes!
+            if 'net_storage' in serv_list:
+                if serv_list['net_storage'] == 1:
+                    IP_sel='localhost' # use the local service
+            if IP_sel == '':
+                # Select a node from the existing list of nodes #TODO may also check on lower layer nodes!
+                #nodes_ns=[n for n in self._nodeslist if n['services']['net_storage'] == 1] Replaced by iteration loop to avoid errors
+                nodes_ns=[]
+                for n in self._nodeslist:
+                    if 'services' in n:
+                        if 'net_storage' in n['services']:
+                            if (n['services']['net_storage'] == 1):
+                                nodes_ns.append(n)
                 if len(nodes_ns) == 0:
                     self.LOGGER.warning("No node with net storage service is available, impossible to update own node entry in DB!!")
                 else:           
