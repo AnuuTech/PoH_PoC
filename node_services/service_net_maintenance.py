@@ -13,6 +13,7 @@ import urllib
 import pika
 
 class ServiceRunning(ReconnectingNodeConsumer):
+    _NODE_DOWNTIME_LIMIT=300 #in seconds
     
     def _msg_process(self, msg, hdrs):
         super()._msg_process(msg, hdrs)
@@ -112,13 +113,23 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 #service_str='services.'+self._service
                 #db_query = { "level": nodelevel, service_str:0} query for only one service type
                 db_query = { "level": nodelevel}
-                db_filter = {"IP_address":1, "uid":1, "_id":0, "services":1}
+                db_filter = {"IP_address":1, "uid":1, "_id":0, "services":1, "last_view":1}
                 nodeslist=list(nodes_col.find(db_query, db_filter))
-                if len(nodeslist) == 0:
-                    self.LOGGER.info("while updating nodes list of "+nodelevel+", DB access works but no input in DB received back!")
-                else:
-                    # update nodes list
-                    self.LOGGER.info("The list of nodes in the layer "+nodelevel+" has been updated: " + str(nodeslist))
+                # check if some nodes are not responding anymore (at node level)
+                if nodelevel == self._nodelevel:
+                    nodes_down=[n for n in nodeslist if (time.time()-n['last_view']) > self._NODE_DOWNTIME_LIMIT]
+                    # delete nodes down from DB   
+                    for n in nodes_down:
+                        db_query = { 'uid': n['uid']}
+                        nodes_col.delete_many(db_query) # usage of delete_many instead of delete_one to delete duplciate if any
+                        self.LOGGER.info("Deleted node "+n['uid']+" from DB, not responding for more than " + str(self._NODE_DOWNTIME_LIMIT)+"s")
+                    # update nodeslist
+                    nodeslist=[n for n in nodeslist if n not in nodes_down]
+            if len(nodeslist) == 0:
+                self.LOGGER.info("while updating nodes list of "+nodelevel+", DB access works but no valid nodes have been found!")
+            else:
+                # update nodes list
+                self.LOGGER.info("The list of nodes in the layer "+nodelevel+" has been updated: " + str(nodeslist))
         except:
             self.LOGGER.warning("WARNING! Impossible to reach the DB on "+str(IP_sel)+" "+ str(sys.exc_info()[0]))
         return nodeslist
