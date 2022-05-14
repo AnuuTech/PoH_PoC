@@ -218,7 +218,7 @@ class NodeConsumer(object):
         :param pika.Spec.BasicProperties: properties
         :param bytes body: The message body
         """
-        self.LOGGER.debug('Received message # %s: %s', basic_deliver.delivery_tag, body)
+        #self.LOGGER.debug('Received message # %s: %s', basic_deliver.delivery_tag, body)
                     #basic_deliver.delivery_tag, properties.headers, body)
         # MODIF FROM ORIGINAL
         if self._consumer_method(channel, basic_deliver, properties, body):
@@ -521,7 +521,7 @@ class ReconnectingNodeConsumer(object):
         
     def _initmsg(self):
         basic_msg = {
-        "uid": randomstring(12),
+        "uid": self.randomstring(12),
         "content": "some client data",
         "content_hash": "used for HMES",
         "pubk": "empty"
@@ -636,10 +636,14 @@ class ReconnectingNodeConsumer(object):
                 db_url='mongodb://admin:' + urllib.parse.quote(self._db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
                 with pymongo.MongoClient(db_url) as db_client:
                     at_db = db_client["AnuuTechDB"]
-                    nodes_col = at_db[collects]
-                    # Update/Insert values, using upsert = True
-                    nodes_col.update_one(db_query, db_values_toset, True)
-                    self.LOGGER.debug(str(db_values_toset))
+                    col = at_db[collects]
+                    if db_values_toset is not None:
+                        # Update/Insert values, using upsert = True
+                        col.update_one(db_query, db_values_toset, True)
+                        self.LOGGER.debug(str(db_values_toset))
+                    else:
+                        # use insert command
+                        col.insert_one(db_query)
                     self.LOGGER.info("Values updated on DB, own IP = " + self._own_IP)
         except:    
             e = sys.exc_info()[1]

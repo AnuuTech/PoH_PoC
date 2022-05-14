@@ -127,7 +127,7 @@ if len(defaultL3nodes)==0:
 class App:
 
     def __init__(self, wind):
-        global varGr, mlist, name, nodeslist, chat_msg, dest_address, IPs, varGr31, IP_sel
+        global varGr, mlist, name, nodeslist, chat_msg, dest_address, IPs, varGr31, IP_sel, nodeslist_chat, nodeslist_poh
         frame = tkinter.Frame(wind)
         getL3nodesList()
         IPs=list(nodeslist.values())
@@ -168,7 +168,7 @@ class App:
 ##        b = tkinter.Radiobutton(frame, variable=varGr, text="TEST ping", value=2,
 ##                                        command=self.mtype)
         b.pack(anchor=tkinter.W)
-        b = tkinter.Radiobutton(frame, variable=varGr, text="HMES", value=3,
+        b = tkinter.Radiobutton(frame, variable=varGr, text="PoH", value=3,
                                         command=self.mtype)
         b.pack(anchor=tkinter.W)
 
@@ -247,7 +247,7 @@ class App:
         if msgtype==0:
             ts="CHAT"
         else:
-            ts="HMES"
+            ts="PoH"
         selection = "You selected the message type: " + ts
         LOGGER.info(selection) 
 
@@ -354,16 +354,14 @@ def keepconnection():
             LOGGER.info(logmsg)
             cleanall()
             continue
-        
-
 
 def msgconsumer(ch, method, properties, body):
-    global name, contacts, msg_waiting, IP_sel
+    global name, contacts, msg_waiting, IP_sel, nodeslist_poh, defaultL3nodes
     hdrs=properties.headers
     LOGGER.info(hdrs)
     msg= json.loads(body.decode("utf-8"))
     LOGGER.info(msg)
-    if hdrs.get('type')=='chat':
+    if hdrs.get('type')=='CHAT':
         LOGGER.info("AnuuChat Received " + msg['content'])
         if hdrs.get('sender_uid')==client_uid and hdrs.get('dest_all')=='clients':
             mlist.insert(0,'AnuuChat: Own general message received back: "' + str(msg['content']+'"'))
@@ -396,16 +394,18 @@ def msgconsumer(ch, method, properties, body):
             headers['type']='CHAT-PUK'
             send_msg(headers, msg, msgtype)
 
-    elif hdrs.get('type')=='HMES' and hdrs.get('dest_uid')==client_uid:
+    elif (hdrs.get('type')=='PoH_L3_R1' and hdrs.get('dest_uid')==client_uid):
         # get all infos from DB
-        db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
+        random.shuffle(defaultL3nodes)
+        IP_DB=defaultL3nodes[0] # TODO get all net storage available nodes
+        db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_DB+':27017/?authMechanism=DEFAULT&authSource=admin'
         db_client = pymongo.MongoClient(db_url)
         at_db = db_client["AnuuTechDB"]
         tx_col = at_db["transactions_pending"]
         db_query = { "uid": msg['uid'] }
         x=tx_col.find_one(db_query)
         if x is None:
-            LOGGER.info("HMES " + str(msg['uid'])+" received back but no input in DB exists!")
+            LOGGER.info("PoH " + str(msg['uid'])+" received back but no input in DB exists!")
         else:
             # get node signer public key
             node_col=at_db["nodes"]
@@ -428,8 +428,8 @@ def msgconsumer(ch, method, properties, body):
                     LOGGER.info("Msg " + str(msg['uid'])+" has NOT BEEN VALIDLY signed by "
                                 +str(x.get('node_uid')))
 
-        LOGGER.info("HMES Received " + str(msg['content']))
-        mlist.insert(0,"HMES: Message received back: "+str(msg['content']))
+        LOGGER.info("PoH Received " + str(msg['content']))
+        mlist.insert(0,"PoH: Message received back: "+str(msg['content']))
         
 
     ch.basic_ack(delivery_tag = method.delivery_tag)
@@ -446,7 +446,7 @@ def msgconsumer(ch, method, properties, body):
                 send_msg(item[0],item[1],item[2])
 
 def prepare_msg():
-    global dest_address, name, msg_waiting, chat_msg, nodeslist
+    global dest_address, name, msg_waiting, chat_msg, nodeslist, nodeslist_chat, nodeslist_poh
     msg=initmsg()
     msgtype=None
     try:
@@ -459,14 +459,14 @@ def prepare_msg():
                 headers=initheaders()
                 headers['service']='chat'
                 headers['dest_all']='clients'
-                headers['type']='chat'
+                headers['type']='CHAT'
                 msg['content']=chat_msg
             else:
                 #Private message
                 headers=initheaders()
                 headers['service']='chat'
                 headers['dest_uid']=dest_address
-                headers['type']='chat'
+                headers['type']='CHAT'
                 if dest_address in contacts.keys():
                     enc_key=PKCS1_OAEP.new(RSA.importKey(contacts[dest_address].encode()))
                     msg['content']= base64.b64encode(enc_key.encrypt(chat_msg.encode())).decode()
@@ -482,21 +482,28 @@ def prepare_msg():
                     msg['content']= 'PUK attached'
 
             LOGGER.info("msg prepared to be sent: chat:" + str(msg['content']))
-        # HMES    
+        # PoH_L3_R1    
         elif int(varGr.get()) >= 1:
             msgtype=1
             # Hash message
             msg['content']= chat_msg
             msg['content_hash']=binascii.hexlify((SHA256.new(chat_msg.encode())).digest()).decode()
-            # Select L3 node based on hash (sum of all characters)
-            node_uid=list(nodeslist.keys())[(sum(msg['content_hash'].encode()))%len(nodeslist.keys())]
-            headers={'dest': node_uid, 'type': 'HMES', 'sender': client_uid}
-            LOGGER.info("msg prepared to be sent: "+str(headers))
+            # Select L3 node based on hash (sum of all characters), restricted to nodes with poh service
+            if len(nodeslist_poh) != 0:
+                node_uid=list(nodeslist_poh.keys())[(sum(msg['content_hash'].encode()))%len(nodeslist_poh.keys())]
+                headers=initheaders()
+                headers['service']='poh'
+                headers['dest_uid']=node_uid
+                headers['type']='PoH_L3_R1'
+                LOGGER.info("msg prepared to be sent: "+str(headers))
+            else:
+                LOGGER.info("Cannot send PoH msg, no node with service active found!")
+                mlist.insert(0,"Cannot send PoH msg, no node with service active found!")
 
     except:
         mlist.insert(0,"Impossible to prepare msg, error occured!")
         e = sys.exc_info()[0]
-        LOGGER.info( "<p>Problem while preparing message sending " % str(e) )
+        LOGGER.info( "<p>Problem while preparing message sending %s" % str(e) )
         
     send_msg(headers, msg, msgtype)
 
@@ -518,12 +525,12 @@ def send_msg(headers, msg, msgtype):
                                properties=pika.BasicProperties(headers=headers),
                                body=(json.dumps(msg)))
         if msgtype == 0:
-            if headers.get('type')=='chat':
+            if headers.get('type')=='CHAT':
                 mlist.insert(0,"AnuuChat: Message sent.")
             else:
                 mlist.insert(0,"AnuuChat: Encryption request sent.")
         elif msgtype == 1:
-            mlist.insert(0,"HMES: Message sent.")
+            mlist.insert(0,"PoH: Message sent.")
         connection2.close()
     except:
         mlist.insert(0,"Impossible to send msg, error occured!") 
@@ -540,7 +547,7 @@ def initmsg():
     "uid": randomstring(12),
     "username": "",
     "content": "some client data",
-    "content_hash": "used for HMES",
+    "content_hash": "used for PoH",
     "pubk": "empty"
     }
     return msg_empty
@@ -561,7 +568,7 @@ def initheaders():
 
 
 def getL3nodesList():
-    global nodeslist, defaultL3nodes
+    global nodeslist, nodeslist_chat, nodeslist_poh, defaultL3nodes
     #print(defaultL3nodes)
     timestamp_config=time.time()
     waiting=False
@@ -576,8 +583,10 @@ def getL3nodesList():
             nodes_col = at_db["nodes"]
             db_query = { "level": 'L3'}
             db_filter = {"uid":1, "IP_address":1, "_id":0, "services":1}
-            templist=list(nodes_col.find(db_query, db_filter).max_time_ms(5000))
+            templist=list(nodes_col.find(db_query, db_filter))
             nodeslist={n['uid']:n['IP_address'] for n in templist }# if (n['services']['net_storage'] == 1}
+            nodeslist_chat={n['uid']:n['IP_address'] for n in templist if n['services']['chat'] == 1}
+            nodeslist_poh={n['uid']:n['IP_address'] for n in templist if n['services']['poh'] == 1}
         except:
             time.sleep(1)
             e = sys.exc_info()[1]

@@ -16,7 +16,7 @@ def starting(nodelevel):
     else:
         #default config, net_maintenance is mandatory
         serv_list={'net_maintenance': 1, 'chat': 0, 'net_storage': 0,
-                   'PoH': 0, 'data_storage': 0}
+                   'poh': 0, 'data_storage': 0}
         with open(SERVICES_PATH, 'w') as serv_file:
                 serv_file.write(json.dumps(serv_list))
 
