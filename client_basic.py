@@ -127,7 +127,7 @@ if len(defaultL3nodes)==0:
 class App:
 
     def __init__(self, wind):
-        global varGr, mlist, name, nodeslist, chat_msg, dest_address, IPs, varGr31, IP_sel, nodeslist_chat, nodeslist_poh
+        global rbutt, varGr, mlist, name, nodeslist, chat_msg, dest_address, IPs, varGr31, IP_sel, nodeslist_chat, nodeslist_poh
         frame = tkinter.Frame(wind)
         getL3nodesList()
         IPs=list(nodeslist.values())
@@ -181,14 +181,20 @@ class App:
         if len(sys.argv) == 2:
             if sys.argv[1] == 'local':
                 IPs.insert(0,'192.168.1.71')
+        rbutt={}
         for j in range(min(len(IPs),9)): # only up to 9 IPs shown
-                b = tkinter.Radiobutton(frame, variable=varGr31, text=IPs[j], value=j,
+                rbutt[IPs[j]] = tkinter.Radiobutton(frame, variable=varGr31, text=IPs[j], value=IPs[j],
                                         command=self.ipsel)
-                b.pack(anchor=tkinter.W)
-        varGr31.set(0)
+                rbutt[IPs[j]].pack(anchor=tkinter.W)
+
+
         if len(IPs)==0:
             print("ERROR: no cluster nodes found...")
             exit()
+        # pre-select one IP
+        self.mtype() # disable IPs radio button without the default chat service
+
+
         IP_sel = IPs[0] #TODO select best ping?
    
         w8 = tkinter.Label(frame, text="AnuuChat message to send:")
@@ -246,15 +252,29 @@ class App:
         msgtype = int(varGr.get())
         if msgtype==0:
             ts="CHAT"
+            for ip in nodeslist.values():
+                if ip not in nodeslist_chat.values():
+                    rbutt[ip]['state'] = 'disabled'
+                else:
+                    rbutt[ip]['state'] = 'normal'
+            varGr31.set(list(nodeslist_chat.values())[0]) # select first IP with service activated
         else:
             ts="PoH"
+            for ip in nodeslist.values():
+                if ip not in nodeslist_poh.values():
+                    rbutt[ip]['state'] = 'disabled'
+                else:
+                    rbutt[ip]['state'] = 'normal'
+            varGr31.set(list(nodeslist_poh.values())[0]) # select first IP with service activated
         selection = "You selected the message type: " + ts
-        LOGGER.info(selection) 
-
+        LOGGER.info(selection)
+        self.ipsel() # to update IP selected
+        
     def ipsel(self):
         global IP_sel, IPs, varGr31
-        IP_sel=IPs[int(varGr31.get())]
+        IP_sel=varGr31.get()
         selection = "You selected the ip " + str(IP_sel)
+        disconn()
         print(selection)     
 
     def callbackE(self, P):
