@@ -11,20 +11,41 @@ import socket
 import random
 import urllib
 import pika
+import threading
 
 class ServiceRunning(ReconnectingNodeConsumer):
     _NODE_DOWNTIME_LIMIT=300 #in seconds
     
     def _msg_process(self, msg, hdrs):
-        super()._msg_process(msg, hdrs)
-        self.LOGGER.info("Entered extended msg process method")
+        # Get a node on lower layer node with corresponding service
+        if self._nodelevel == 'L3' and (hdrs['service'] == 'data_storage' or hdrs['service'] == 'next_service_to_be_implemented') :
+            nodes_cs=[]
+            for n in self._nodeslist_lower:
+                if 'services' in n:
+                    if hdrs['service'] in n['services']:
+                        if n['services'][hdrs['service']] == 1:
+                            nodes_cs.append(n)
+            random.shuffle(nodes_cs)
+            if len(nodes_cs) == 0:
+                self.LOGGER.warning("No node with service "+ hdrs['service']+" is available, impossible to forward msg "+msg['uid']+"!")
+            else:
+                if 'IP_address' in nodes_cs[0]:
+                    self._msgs_to_send.append([msg, hdrs, nodes_cs[0]['IP_address'], 'L2'])
+                    self.LOGGER.info("msg "+msg['uid']+" forwarded to node with service: "+ hdrs['service']+" on node "+nodes_cs[0]['IP_address'])
+                else:
+                    self.LOGGER.warning("One L2 node has no IP set! Impossible to forward "+ hdrs['service']+" msg!") 
         return True
 
     def _initnode(self):
+        self.NODE_TICK_INTERVAL=20.0
         self._check_IP()
         # Update list of nodes in the actual and lower layer and save files
-        self._nodeslist = self._update_nodeslist(self._nodeslist, self._nodelevel)
-        self._nodeslist_lower = self._update_lowerlayer_nodeslist()
+        updated=self._update_nodeslist(self._nodeslist, self._nodelevel)
+        if updated is not None:
+            self._nodeslist = updated
+        updated_low = self._update_lowerlayer_nodeslist()
+        if updated_low is not None:
+            self._nodeslist_lower = updated_low
         with open(self.NODESLIST_PATH, 'w') as nodes_file:
             nodes_file.write(json.dumps(self._nodeslist))
         with open(self.NODESLIST_LOWER_PATH, 'w') as nodes_file:
@@ -32,9 +53,15 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
         # Maintain network structure    
         self._net_check()
+
+        
     
         self.LOGGER.info("INITALISATION net_maintenance done")
         super()._initnode()
+
+    def _get_headers_arg(self): # Override to listen to other services to forward corresponding messages
+        argum={'x-match': 'any', 'service': 'data_storage'}
+        return argum
         
     def _check_IP(self):
         # Check own IP and save into a file
@@ -56,6 +83,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
             self.LOGGER.warning("WARNING! Impossible to get own IP")
             
     def _ticking_actions(self):
+        self.LOGGER.debug("Threads number: "+str(threading.activeCount()))
         #super()._ticking_actions()
         self._check_IP()
         #update nodeslists
@@ -88,7 +116,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
                     self.LOGGER.info("WARNING! Impossible to get one of the default node: " + dlh+ str(sys.exc_info()[0]))
             if len(defaultnodesIP) == 0:
                 self.LOGGER.warning("ERROR! Impossible to get any default node... will retry at next ticking.")
-                return nodeslist
+                return
 
         # Select a node
         IP_sel=''
@@ -105,9 +133,12 @@ class ServiceRunning(ReconnectingNodeConsumer):
                         if n['services']['net_storage'] == 1:
                             nodes_ns.append(n)
             if len(nodes_ns) == 0:
-                self.LOGGER.warning("ERROR! No nodes with net_storage service are available! will retry at next ticking.")
+                self.LOGGER.warning("ERROR! No nodes with net_storage service at "+nodelevel+" are available! will retry at next ticking.")
                 # force to re-use the default nodes
-                self._nodeslist={}
+                if self._nodelevel == nodelevel:
+                    self._nodeslist={}
+                else:
+                    self._nodeslist.lower={}
                 return
             random.shuffle(nodes_ns)
             if 'IP_address' in nodes_ns[0]:

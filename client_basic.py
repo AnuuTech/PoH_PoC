@@ -1,6 +1,7 @@
 import pika
 import time
 import tkinter
+from tkinter import filedialog
 import threading
 import socket
 import random
@@ -47,12 +48,14 @@ connected=False
 threads=[]
 msgtype=0
 chat_msg="AnuuTech is coming!"
+datapath=''
 dest_address=''
 client_uid_path='client_uid.file'
 pubkey_path='atclient_pubkey.file'
 privkey_path='atclient_privkey.file'
 contacts={}
 msg_waiting=[]
+file_hash=''
 
 
 
@@ -127,7 +130,8 @@ if len(defaultL3nodes)==0:
 class App:
 
     def __init__(self, wind):
-        global rbutt, varGr, mlist, name, nodeslist, chat_msg, dest_address, IPs, varGr31, IP_sel, nodeslist_chat, nodeslist_poh
+        global rbutt, varGr, mlist, pathh, name, nodeslist
+        global chat_msg, dest_address, IPs, varGr31, IP_sel, nodeslist_chat, nodeslist_poh, nodeslist_ds
         frame = tkinter.Frame(wind)
         getL3nodesList()
         IPs=list(nodeslist.values())
@@ -162,18 +166,28 @@ class App:
         b = tkinter.Radiobutton(frame, variable=varGr, text="AnuuChat message", value=0,
                                         command=self.mtype)
 ##        b.pack(anchor=tkinter.W)
-##        b = tkinter.Radiobutton(frame, variable=varGr, text="TEST ping", value=1,
-##                                        command=self.mtype)
-##        b.pack(anchor=tkinter.W)
 ##        b = tkinter.Radiobutton(frame, variable=varGr, text="TEST ping", value=2,
 ##                                        command=self.mtype)
         b.pack(anchor=tkinter.W)
         b = tkinter.Radiobutton(frame, variable=varGr, text="PoH", value=3,
                                         command=self.mtype)
+
+        b.pack(anchor=tkinter.W)
+        b = tkinter.Radiobutton(frame, variable=varGr, text="Data Storage", value=4,
+                                        command=self.mtype)
+        
         b.pack(anchor=tkinter.W)
 
         varGr.set(0)
 
+        pathh = tkinter.Entry(frame)
+        pathh.pack(side=tkinter.TOP, expand=True, padx=20)
+
+        self.openfile = tkinter.Button(
+            frame, text="Select File", command=openFile
+            )
+        self.openfile.pack(side = tkinter.TOP)
+        
         w31 = tkinter.Label(frame, text="Select cluster node:")
         w31.pack(side = tkinter.TOP, anchor = tkinter.W)
 
@@ -258,7 +272,7 @@ class App:
                 else:
                     rbutt[ip]['state'] = 'normal'
             varGr31.set(list(nodeslist_chat.values())[0]) # select first IP with service activated
-        else:
+        elif msgtype==3:
             ts="PoH"
             for ip in nodeslist.values():
                 if ip not in nodeslist_poh.values():
@@ -266,6 +280,14 @@ class App:
                 else:
                     rbutt[ip]['state'] = 'normal'
             varGr31.set(list(nodeslist_poh.values())[0]) # select first IP with service activated
+        elif msgtype==4:
+            ts="Data Storage"
+            for ip in nodeslist.values():
+                if ip not in nodeslist_ds.values():
+                    rbutt[ip]['state'] = 'disabled'
+                else:
+                    rbutt[ip]['state'] = 'normal'
+            varGr31.set(list(nodeslist_ds.values())[0]) # select first IP with service activated
         selection = "You selected the message type: " + ts
         LOGGER.info(selection)
         self.ipsel() # to update IP selected
@@ -305,8 +327,7 @@ class App:
             dest_address = P
             return True
         else:
-            return False        
-
+            return False
                                
 root = tkinter.Tk()
 root.title(Title)
@@ -322,7 +343,15 @@ def disconn():
     global connected
     connected=False
     cleanall()
-    
+
+def openFile():
+    tf = filedialog.askopenfilename(
+        initialdir=os.getcwd(), 
+        title="Select file" 
+        #filetypes=(("Text Files", "*.txt"),)
+        )
+    pathh.delete(0,'end')
+    pathh.insert(0, tf)
     
 def keepconnection():
     global connected, connection, channel, IP_sel
@@ -376,7 +405,7 @@ def keepconnection():
             continue
 
 def msgconsumer(ch, method, properties, body):
-    global name, contacts, msg_waiting, IP_sel, nodeslist_poh, defaultL3nodes
+    global name, contacts, msg_waiting, IP_sel, nodeslist_poh, defaultL3nodes, file_hash
     hdrs=properties.headers
     LOGGER.info(hdrs)
     msg= json.loads(body.decode("utf-8"))
@@ -451,7 +480,17 @@ def msgconsumer(ch, method, properties, body):
         LOGGER.info("PoH Received " + str(msg['content']))
         mlist.insert(0,"PoH: Message received back: "+str(msg['content']))
         
-
+    elif (hdrs.get('type')=='DATA_SAVED' and hdrs.get('dest_uid')==client_uid):
+        if file_hash == '':
+            file_hash=msg['content_hash']
+            mlist.insert(0,"Data storage: confirmation of file successfully stored on: "+hdrs['sender_uid'])
+        else:
+            if file_hash==msg['content_hash']:
+                mlist.insert(0,"Data storage: confirmation of file successfully stored on: "+hdrs['sender_uid'])
+            else:
+                file_hash=msg['content_hash']
+                mlist.insert(0,"Data storage: A new file has been sucessfully stored on: "+hdrs['sender_uid'])
+                
     ch.basic_ack(delivery_tag = method.delivery_tag)
 
     #Check if there are chat messages to send
@@ -466,7 +505,8 @@ def msgconsumer(ch, method, properties, body):
                 send_msg(item[0],item[1],item[2])
 
 def prepare_msg():
-    global dest_address, name, msg_waiting, chat_msg, nodeslist, nodeslist_chat, nodeslist_poh
+    global dest_address, name, msg_waiting, chat_msg, nodeslist, nodeslist_chat
+    global nodeslist_poh, nodeslist_ds, pathh
     msg=initmsg()
     msgtype=None
     try:
@@ -503,8 +543,8 @@ def prepare_msg():
 
             LOGGER.info("msg prepared to be sent: chat:" + str(msg['content']))
         # PoH_L3_R1    
-        elif int(varGr.get()) >= 1:
-            msgtype=1
+        elif int(varGr.get()) == 3:
+            msgtype=3
             # Hash message
             msg['content']= chat_msg
             msg['content_hash']=binascii.hexlify((SHA256.new(chat_msg.encode())).digest()).decode()
@@ -519,13 +559,26 @@ def prepare_msg():
             else:
                 LOGGER.info("Cannot send PoH msg, no node with service active found!")
                 mlist.insert(0,"Cannot send PoH msg, no node with service active found!")
+        # DATA STORAGE   
+        elif int(varGr.get()) == 4:
+            msgtype=4
+            if len(pathh.get())<2:
+                mlist.insert(0,"No file selected!")
+                return
+            with open (pathh.get(), "r") as tfile:
+                tempfile=tfile.read()
+            
+            msg['content']= tempfile
+            headers=initheaders()
+            headers['service']='data_storage'
+            headers['type']='SAVE_DATA'
+            LOGGER.info("File saving prepared to be sent: "+str(headers))
 
+        send_msg(headers, msg, msgtype)
     except:
         mlist.insert(0,"Impossible to prepare msg, error occured!")
         e = sys.exc_info()[0]
         LOGGER.info( "<p>Problem while preparing message sending %s" % str(e) )
-        
-    send_msg(headers, msg, msgtype)
 
 
 def send_msg(headers, msg, msgtype):
@@ -549,8 +602,10 @@ def send_msg(headers, msg, msgtype):
                 mlist.insert(0,"AnuuChat: Message sent.")
             else:
                 mlist.insert(0,"AnuuChat: Encryption request sent.")
-        elif msgtype == 1:
+        elif msgtype == 3:
             mlist.insert(0,"PoH: Message sent.")
+        elif msgtype == 4:
+            mlist.insert(0,"Data storage: Message sent.")
         connection2.close()
     except:
         mlist.insert(0,"Impossible to send msg, error occured!") 
@@ -588,7 +643,7 @@ def initheaders():
 
 
 def getL3nodesList():
-    global nodeslist, nodeslist_chat, nodeslist_poh, defaultL3nodes
+    global nodeslist, nodeslist_chat, nodeslist_poh, nodeslist_ds, defaultL3nodes
     #print(defaultL3nodes)
     timestamp_config=time.time()
     waiting=False
@@ -607,6 +662,7 @@ def getL3nodesList():
             nodeslist={n['uid']:n['IP_address'] for n in templist }# if (n['services']['net_storage'] == 1}
             nodeslist_chat={n['uid']:n['IP_address'] for n in templist if n['services']['chat'] == 1}
             nodeslist_poh={n['uid']:n['IP_address'] for n in templist if n['services']['poh'] == 1}
+            nodeslist_ds={n['uid']:n['IP_address'] for n in templist if n['services']['net_maintenance'] == 1}
         except:
             time.sleep(1)
             e = sys.exc_info()[1]

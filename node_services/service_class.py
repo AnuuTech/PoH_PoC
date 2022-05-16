@@ -321,6 +321,8 @@ class ReconnectingNodeConsumer(object):
     UID_PATH=MAIN_PATH+'node_data/node_uid.file'
     PS_PATH=MAIN_PATH+'node_data/ps_loc.file'
     SERVICES_PATH='node_services/services.conf'
+    PUBKEY_PATH='node_data/node_pub.key'
+    PRIVKEY_PATH='node_data/node_priv.key'
 
     #helper functions
     def ii_helper(self, fily, sel):
@@ -355,21 +357,19 @@ class ReconnectingNodeConsumer(object):
         self._db_pass=self.ii_helper('node_data/access.bin', '12')
 
         # Get Signature keys
-        pubkey_path='node_pub.key'
-        privkey_path='node_priv.key'
-        if not os.path.isfile(pubkey_path) or not os.path.isfile(privkey_path):
+        if not os.path.isfile(self.PUBKEY_PATH) or not os.path.isfile(self.PRIVKEY_PATH):
             # issue keys
             private_key = RSA.generate(1024)
             public_key = private_key.publickey()
             self.LOGGER.info('No RSA keys found, new ones are created')
-            with open (privkey_path, "wb") as prv_file:
+            with open (self.PRIVKEY_PATH, "wb") as prv_file:
                 prv_file.write(private_key.exportKey('PEM','annu_seed-l'))
-            with open (pubkey_path, "wb") as pub_file:
+            with open (self.PUBKEY_PATH, "wb") as pub_file:
                 pub_file.write(public_key.exportKey('PEM'))
         else:
-            with open (privkey_path, "rb") as prv_file:
+            with open (self.PRIVKEY_PATH, "rb") as prv_file:
                 private_key=RSA.importKey(prv_file.read(),'annu_seed-l')
-            with open (pubkey_path, "rb") as pub_file:
+            with open (self.PUBKEY_PATH, "rb") as pub_file:
                 public_key=RSA.importKey(pub_file.read())
                 self.LOGGER.debug('RSA keys sucessfully loaded.')
         self._PUBKEY=public_key
@@ -481,8 +481,9 @@ class ReconnectingNodeConsumer(object):
             self.LOGGER.critical(logmsg)
 
         logmsg=("INITIALISATION of "+self._uid+" done, IP: " + self._own_IP+
-                " number of layer nodes: "+str(len(self._nodeslist))+
-                " number of lower layer nodes: "+str(len(self._nodeslist_lower)))
+                " number of layer nodes: "+str(len(self._nodeslist)))
+        if self._nodelevel != 'L1':
+                logmsg=logmsg+" number of lower layer nodes: "+str(len(self._nodeslist_lower))
         self.LOGGER.info(logmsg)
 
     def _get_headers_arg(self):
@@ -505,7 +506,9 @@ class ReconnectingNodeConsumer(object):
     def _node_consumer(self, ch, method, properties, body):
         try:
             msg=json.loads(body.decode("utf-8"))
-            self.LOGGER.info("Received decode: " + str(msg))
+            msgdisp=msg.copy()
+            msgdisp['content']='NOT DISPLAYED'
+            self.LOGGER.info("Received decode: " + str(msgdisp))
             hdrs=properties.headers
             self.LOGGER.debug(hdrs)
             return (self._msg_process(msg, hdrs))
@@ -551,7 +554,9 @@ class ReconnectingNodeConsumer(object):
         while self._sending:
             if len(self._msgs_to_send)>0:
                 msg, hdrs, IP, level =self._msgs_to_send.pop(0)
-                self.LOGGER.debug(str(msg))
+                msgdisp=msg.copy()
+                msgdisp['content']='NOT DISPLAYED'
+                self.LOGGER.debug(str(msgdisp))
                 self.LOGGER.debug(str(hdrs))
                 # Define credentials and exchange name according to level
                 nuser = str(level+'ext_node')
@@ -596,15 +601,15 @@ class ReconnectingNodeConsumer(object):
                     self.LOGGER.error(logmsg)
                     hdrs['retry']=hdrs['retry']+1
                     # Get a node with same service
+                    nodes_s=[]
                     if level == self._nodelevel:
                         #nodes_s=[n for n in self._nodeslist if (n['services'][hdrs['service']] == 1)] Replaced by iteration loop to avoid errors
-                        nodes_s=[]
                         for n in self._nodeslist:
                             if 'services' in n:
                                 if hdrs['service'] in n['services']:
                                     if (n['services'][hdrs['service']] == 1):
                                         nodes_s.append(n)
-                    else:
+                    elif self._nodelevel != 'L1':
                         #nodes_s=[n for n in self._nodeslist_lower if (n['services'][hdrs['service']] == 1)]
                         for n in self._nodeslist_lower:
                             if 'services' in n:
