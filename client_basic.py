@@ -130,7 +130,7 @@ if len(defaultL3nodes)==0:
 class App:
 
     def __init__(self, wind):
-        global rbutt, varGr, mlist, pathh, name, nodeslist
+        global rbutt, varGr, mlist, pathh, hashh, name, nodeslist
         global chat_msg, dest_address, IPs, varGr31, IP_sel, nodeslist_chat, nodeslist_poh, nodeslist_ds
         frame = tkinter.Frame(wind)
         getL3nodesList()
@@ -187,6 +187,9 @@ class App:
             frame, text="Select File", command=openFile
             )
         self.openfile.pack(side = tkinter.TOP)
+
+        hashh = tkinter.Entry(frame)
+        hashh.pack(side=tkinter.TOP, expand=True, padx=20)
         
         w31 = tkinter.Label(frame, text="Select cluster node:")
         w31.pack(side = tkinter.TOP, anchor = tkinter.W)
@@ -352,7 +355,7 @@ def openFile():
         )
     pathh.delete(0,'end')
     pathh.insert(0, tf)
-    
+ 
 def keepconnection():
     global connected, connection, channel, IP_sel
     # Start connection keep loop
@@ -405,7 +408,8 @@ def keepconnection():
             continue
 
 def msgconsumer(ch, method, properties, body):
-    global name, contacts, msg_waiting, IP_sel, nodeslist_poh, defaultL3nodes, file_hash
+    global name, contacts, msg_waiting, IP_sel, nodeslist_poh, defaultL3nodes
+    global file_hash, hashh
     hdrs=properties.headers
     LOGGER.info(hdrs)
     msg= json.loads(body.decode("utf-8"))
@@ -483,14 +487,28 @@ def msgconsumer(ch, method, properties, body):
     elif (hdrs.get('type')=='DATA_SAVED' and hdrs.get('dest_uid')==client_uid):
         if file_hash == '':
             file_hash=msg['content_hash']
+            hashh.delete(0,'end')
+            hashh.insert(0, msg['content_hash'])
             mlist.insert(0,"Data storage: confirmation of file successfully stored on: "+hdrs['sender_uid'])
         else:
             if file_hash==msg['content_hash']:
                 mlist.insert(0,"Data storage: confirmation of file successfully stored on: "+hdrs['sender_uid'])
             else:
                 file_hash=msg['content_hash']
+                hashh.delete(0,'end')
+                hashh.insert(0, msg['content_hash'])
                 mlist.insert(0,"Data storage: A new file has been sucessfully stored on: "+hdrs['sender_uid'])
-                
+
+    elif (hdrs.get('type')=='DATA_LOADED' and hdrs.get('dest_uid')==client_uid):
+        fileloaded=msg['content']
+        mlist.insert(0,"Data storage: file retrieved from: "+hdrs['sender_uid'])
+        with open (pathh.get()+".RETRIEVED", "wb") as h_file:
+            h_file.write(base64.b64decode(fileloaded))
+
+    elif (hdrs.get('type')=='DATA_NOT_FOUND' and hdrs.get('dest_uid')==client_uid):
+        msgh=msg['content']
+        mlist.insert(0, msgh)
+   
     ch.basic_ack(delivery_tag = method.delivery_tag)
 
     #Check if there are chat messages to send
@@ -506,7 +524,7 @@ def msgconsumer(ch, method, properties, body):
 
 def prepare_msg():
     global dest_address, name, msg_waiting, chat_msg, nodeslist, nodeslist_chat
-    global nodeslist_poh, nodeslist_ds, pathh
+    global nodeslist_poh, nodeslist_ds, pathh, hashh
     msg=initmsg()
     msgtype=None
     try:
@@ -562,18 +580,22 @@ def prepare_msg():
         # DATA STORAGE   
         elif int(varGr.get()) == 4:
             msgtype=4
-            if len(pathh.get())<2:
-                mlist.insert(0,"No file selected!")
-                return
-            with open (pathh.get(), "r") as tfile:
-                tempfile=tfile.read()
-            
-            msg['content']= tempfile
             headers=initheaders()
             headers['service']='data_storage'
-            headers['type']='SAVE_DATA'
-            LOGGER.info("File saving prepared to be sent: "+str(headers))
-
+            if len(pathh.get())<2 and len(hashh.get())<10:
+                mlist.insert(0,"No file selected!")
+                return
+            elif len(hashh.get())<10: #sending file
+                with open (pathh.get(), "rb") as tfile:
+                    tempfile=tfile.read()
+                headers['type']='SAVE_DATA'
+                msg['content']= base64.b64encode(tempfile).decode()
+                LOGGER.info("File saving prepared to be sent: "+str(headers))
+            else: #getting file back
+                headers['type']='GET_DATA'
+                msg['content']= hashh.get()
+                LOGGER.info("File loading prepared to be sent: "+str(headers))
+            
         send_msg(headers, msg, msgtype)
     except:
         mlist.insert(0,"Impossible to prepare msg, error occured!")

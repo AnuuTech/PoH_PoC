@@ -22,7 +22,8 @@ class ServiceRunning(ReconnectingNodeConsumer):
  
     def _msg_process(self, msg, hdrs):
 
-        if (hdrs.get('type')=='POH_L3_R1' and hdrs.get('dest_uid') == self._uid):
+        if (hdrs.get('type')=='POH_L3_R1' and (hdrs.get('dest_uid') == self._uid or
+                                               hdrs.get('dest_IP') == self._own_IP)):
             #time.sleep(0.1)
             #Create fingerprint
             tt=time.time()

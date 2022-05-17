@@ -7,6 +7,8 @@ import random
 import string
 import json
 import sys
+import pymongo
+import urllib
 import signal
 signal.signal(signal.SIGINT, signal.default_int_handler) # to ensure Signal to be received
 
@@ -31,6 +33,7 @@ def ii_helper(fily, sel):
         brezi=bytes(c ^ abc[i % abcl] for i, c in enumerate(brez)).decode()
         return (brezi)
     return null
+db_pass=ii_helper('node_data/access.bin', '12')
 
 #get hostname
 hostname=socket.gethostname()
@@ -41,8 +44,8 @@ if len(sys.argv) == 2:
         defaultL3nodes.append('192.168.1.71')
 
 #get default L3nodes
-defaultL3nodes_hosts=['at-clusterL3'+ii_helper('access.bin', '8'),
-                      'at-clusterL3b'+ii_helper('access.bin', '8')]
+defaultL3nodes_hosts=['at-clusterL3'+ii_helper('node_data/access.bin', '8'),
+                      'at-clusterL3b'+ii_helper('node_data/access.bin', '8')]
 for dgh in defaultL3nodes_hosts:
     try:
         defaultL3nodes.append(socket.gethostbyname(dgh))
@@ -120,7 +123,7 @@ class App:
         self.check.pack()
         self.varC2 = tkinter.BooleanVar()
         self.varC2.set(False)
-        self.check2 = tkinter.Checkbutton(frame, text="HMES", variable=self.varC2)
+        self.check2 = tkinter.Checkbutton(frame, text="PoH", variable=self.varC2)
         self.check2.pack()
 
         w8 = tkinter.Label(frame, text="Client Name: "+client_ID)
@@ -230,7 +233,7 @@ def keepconnection():
             channel=connection.channel()
             channel.queue_declare(queue=client_ID, auto_delete=True)
             channel.queue_bind(exchange='L3_main_exchange', queue=client_ID, routing_key='all',
-                               arguments={'x-match': 'any', 'dest': client_ID, 'dest_all': 'clients'})
+                               arguments={'x-match': 'any', 'dest_uid': client_ID, 'dest_all': 'clients'})
 
             channel.basic_qos(prefetch_count=100)           
             channel.basic_consume(queue=client_ID, on_message_callback=msgconsumer)
@@ -288,9 +291,9 @@ def msgconsumer(ch, method, properties, body):
     if app.varC1.get() and hdrs.get('type')=='CHAT':
         i2 += 1
         print("CHAT "+msg['uid']+" Received " + msg['content'])
-    if hdrs.get('type')=='HMES' and msg['initial_sender']==client_ID:
+    if hdrs.get('type')=='POH_L3_R1_DONE' and hdrs['dest_uid']==client_ID:
         i2 += 1
-        print("HMES "+msg['uid']+" Received "+msg['content'])
+        print("PoH "+msg['uid']+" Received "+msg['content'])
     # Receiving speed calculation
     time_st_now=time.time()
     if (time_st_now >= timest_in + 0.1):
@@ -305,6 +308,14 @@ def msgconsumer(ch, method, properties, body):
 def sending_msg():
     global connection, channel2, connection2, sending
     global i, timest_out, timest_i, cur_timeout, old_speed
+    # get node uid from DB
+    db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
+    db_client = pymongo.MongoClient(db_url)
+    at_db = db_client["AnuuTechDB"]
+    nodes_col = at_db["nodes"]
+    db_query = { "IP_address": IP_sel}
+    db_filter = {"uid":1, "_id":0}
+    nodeuid=list(nodes_col.find_one(db_query, db_filter).values())[0]
     sending=True
     mlist.insert(0,"Start sending Msg.")
     credentials = pika.PlainCredentials(lay_user,lay_pass)
@@ -312,25 +323,34 @@ def sending_msg():
     connection2 = pika.BlockingConnection(parameters)
     channel2 = connection2.channel()
     msg=initmsg()
+    headers=initheaders()
     while sending:
         try:
             isent=0
-            headers={'dest': client_ID, 'type': 'CHAT', 'sender': client_ID}
+            #headers={'service': 'chat', 'dest_all': 'clients', 'type': 'CHAT', 'sender_uid': client_ID}
             if app.varC1.get():
                 msg['uid']= str(i)
-                headers={'dest': client_ID, 'type': 'CHAT', 'sender': client_ID}
+                headers['service']= 'chat'
+                headers['dest_all']= 'clients'
+                headers['type']= 'CHAT'
+                headers['dest_IP']=''#otherwise it will be sent back by other chat nodes IP_sel
+                headers['dest_uid']=client_ID
                 msg['content']="msg from " + client_ID
                 channel2.basic_publish(exchange='L3_main_exchange', routing_key='all',
                                        properties=pika.BasicProperties(headers=headers),body=(json.dumps(msg)))
                 print("msg sent: CHAT " + msg['content'] + " "+ msg['uid'])
                 isent += 1
-            if app.varC2.get():
+            elif app.varC2.get():
                 msg['uid']= str(i)
-                headers={'dest': 'main', 'type': 'HMES', 'sender': client_ID}
+                headers['service']= 'poh'
+                headers['type']= 'POH_L3_R1'
+                headers['dest_IP']=IP_sel
+                headers['dest_uid']= nodeuid
+                headers['sender_node_IP']=IP_sel
                 msg['content']="hash msg from " + client_ID
                 channel2.basic_publish(exchange='L3_main_exchange', routing_key='all',
                                        properties=pika.BasicProperties(headers=headers), body=(json.dumps(msg)))
-                print("msg sent: HMES" + msg['content'] + " "+ msg['uid'])
+                print("msg sent: PoH " + msg['content'] + " "+ msg['uid'])
                 isent += 1
             if isent>0:
                 # Real sending speed calculation
@@ -370,12 +390,26 @@ def sending_msg():
 def initmsg():
     msg_empty = {
     "uid": '0',
-    "initial_sender": client_ID,
-    "final_receiver": "",
-    "type": "",
-    "content": ""
+    "username": "StressTest",
+    "content": "some client data",
+    "content_hash": "used for PoH",
+    "pubk":"empty"
     }
     return msg_empty
+
+def initheaders():
+    basic_headers = {
+        'sender_uid': client_ID,
+        'sender_node_IP': '',
+        'dest_uid': '',
+        'dest_IP': '',
+        'dest_all': '',
+        'service': '',
+        'type': '',
+        'hop': 0,
+        'retry': 0
+        }
+    return basic_headers
      
 def cleanall():
     # clean all connections
@@ -407,7 +441,7 @@ def cleanall():
 #CLIENT ID
 client_ID=str('client_'+randomstring(4))
 #print(client_ID)
-lay_pass=ii_helper('access.bin', '1')
+lay_pass=ii_helper('node_data/access.bin', '1')
 app=App(root)
 label_IR.set("NaN")
 label_OR.set("NaN")
