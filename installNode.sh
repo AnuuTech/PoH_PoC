@@ -153,4 +153,4 @@ chmod +x start_node.sh
 chmod +x stop_node.sh
 
 ## Launch python program
-#./start_node.sh
+./start_node.sh
