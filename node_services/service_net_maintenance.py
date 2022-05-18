@@ -14,7 +14,7 @@ import pika
 import threading
 
 class ServiceRunning(ReconnectingNodeConsumer):
-    _NODE_DOWNTIME_LIMIT=300 #in seconds
+    _NODE_DOWNTIME_LIMIT=1200 #in seconds
     
     def _msg_process(self, msg, hdrs):
         # Get a node on lower layer node with corresponding service
@@ -38,6 +38,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
     def _initnode(self):
         self.NODE_TICK_INTERVAL=20.0
+        self._exchange_check() # ensure exchange exists as soon as possible to allow other services starting correctly
         self._check_IP()
         # Update list of nodes in the actual and lower layer and save files
         updated=self._update_nodeslist(self._nodeslist, self._nodelevel)
@@ -51,11 +52,9 @@ class ServiceRunning(ReconnectingNodeConsumer):
         with open(self.NODESLIST_LOWER_PATH, 'w') as nodes_file:
             nodes_file.write(json.dumps(self._nodeslist_lower))
 
-        # Maintain network structure    
-        self._net_check()
+        # Update info to DB  
+        self._nodeinfo_to_DB()
 
-        
-    
         self.LOGGER.info("INITALISATION net_maintenance done")
         super()._initnode()
 
@@ -98,7 +97,10 @@ class ServiceRunning(ReconnectingNodeConsumer):
             nodes_file.write(json.dumps(self._nodeslist))
         with open(self.NODESLIST_LOWER_PATH, 'w') as nodes_file:
             nodes_file.write(json.dumps(self._nodeslist_lower))
-        self._net_check() 
+
+        # Update info to DB and ensure exchange is working
+        self._nodeinfo_to_DB()
+        self._exchange_check()
 
     def _update_nodeslist(self, nodeslist, nodelevel):     
         # populate with default nodes if existing nodeslist is empty
@@ -193,7 +195,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
             return
         return self._update_nodeslist(self._nodeslist_lower, lname)
     
-    def _net_check(self):
+    def _nodeinfo_to_DB(self):
         # Create/Update infos on AnuuTechDB
         # Prepare query in good format
         pem = self._PUBKEY.exportKey('PEM')
@@ -213,6 +215,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
         db_values_toset2 = {"$set":{"services":serv_list}}
         self._updateDB('nodes', db_query, db_values_toset2)
 
+    def _exchange_check(self):
         # Ensure local exchange exists
         try:
             connection = pika.BlockingConnection(self._pikaconn_parameters)

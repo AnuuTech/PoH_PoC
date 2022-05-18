@@ -307,7 +307,7 @@ class ReconnectingNodeConsumer(object):
     Consumer indicates that a reconnect is necessary.
     """
 
-    SW_VERSION='0.0.3beta'
+    SW_VERSION='0.0.3'
     VHOST='anuutech'
     REQ_TIMEOUT=5 #timeout for http requests
     NODE_TICK_INTERVAL=60.0
