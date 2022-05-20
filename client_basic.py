@@ -22,7 +22,7 @@ import urllib
 import signal
 signal.signal(signal.SIGINT, signal.default_int_handler) # to ensure Signal to be received
 
-Title="AnuuTech Basic client V-0.1"
+Title="AnuuTech Basic client V-0.0.3"
 
 #helper function
 def ii_helper(fily, sel):
@@ -135,63 +135,68 @@ class App:
         frame = tkinter.Frame(wind)
         getL3nodesList()
         IPs=list(nodeslist.values())
+        print(nodeslist_poh)
+        frame.configure(bg='grey10')
 
-        w0 = tkinter.Label(frame, text="UNIQUE ADDRESS:")
+        w0 = tkinter.Label(frame, text="UNIQUE ADDRESS:", fg='white', bg='grey10')
         w0.pack(side = tkinter.TOP, anchor = tkinter.W)
 
-        w0b = tkinter.Text(frame, height=1)
+        w0b = tkinter.Text(frame, height=1, fg='white', bg='grey10')
         w0b.insert(1.0, client_uid)
         w0b.pack(side = tkinter.TOP, anchor = tkinter.W)
         w0b.configure(bg=frame.cget('bg'), relief="flat")
         w0b.configure(state="disabled")
         
-        w2 = tkinter.Label(frame, text="Your name to display:")
+        w2 = tkinter.Label(frame, text="Your name to display:", fg='white', bg='grey10')
         w2.pack(side = tkinter.TOP, anchor = tkinter.W)
        
         vcmd = (frame.register(self.callbackE))
-        self.w = tkinter.Entry(frame, validate='key', validatecommand=(vcmd, '%P'), width=15) 
+        self.w = tkinter.Entry(frame, validate='key', validatecommand=(vcmd, '%P'), width=15, bg='grey88') 
         self.w.insert(0,name)
         self.w.pack(side = tkinter.TOP, anchor = tkinter.W)
         
-        w5 = tkinter.Label(frame, text="Information:")
+        w5 = tkinter.Label(frame, text="Information:", fg='white', bg='grey10')
         w5.pack(side = tkinter.TOP, anchor = tkinter.W)
 
-        mlist = tkinter.Listbox(frame, height=5, width=100)
+        mlist = tkinter.Listbox(frame, height=5, width=100, bg='grey88')
         mlist.pack(side=tkinter.TOP, fill=tkinter.BOTH)
 
-        w3 = tkinter.Label(frame, text="Select message type:")
+        w3 = tkinter.Label(frame, text="Select message type:", fg='white', bg='grey10')
         w3.pack(side = tkinter.TOP, anchor = tkinter.W)
 
         varGr = tkinter.StringVar()
         b = tkinter.Radiobutton(frame, variable=varGr, text="AnuuChat message", value=0,
-                                        command=self.mtype)
+                                        command=self.mtype, fg='white', bg='grey10',selectcolor='#222222')
 ##        b.pack(anchor=tkinter.W)
 ##        b = tkinter.Radiobutton(frame, variable=varGr, text="TEST ping", value=2,
 ##                                        command=self.mtype)
         b.pack(anchor=tkinter.W)
         b = tkinter.Radiobutton(frame, variable=varGr, text="PoH", value=3,
-                                        command=self.mtype)
+                                        command=self.mtype, fg='white', bg='grey10',selectcolor='#222222')
 
         b.pack(anchor=tkinter.W)
         b = tkinter.Radiobutton(frame, variable=varGr, text="Data Storage", value=4,
-                                        command=self.mtype)
+                                        command=self.mtype, fg='white', bg='grey10',selectcolor='#222222')
         
         b.pack(anchor=tkinter.W)
 
         varGr.set(0)
 
-        pathh = tkinter.Entry(frame)
+        pathh = tkinter.Entry(frame, bg='grey88')
         pathh.pack(side=tkinter.TOP, expand=True, padx=20)
 
         self.openfile = tkinter.Button(
-            frame, text="Select File", command=openFile
+            frame, text="Select File", command=openFile, fg='white', bg='black'
             )
         self.openfile.pack(side = tkinter.TOP)
 
-        hashh = tkinter.Entry(frame)
+        hashh = tkinter.Entry(frame, bg='grey88')
         hashh.pack(side=tkinter.TOP, expand=True, padx=20)
+
+        w23 = tkinter.Label(frame, text="hash of file to retrieve (leave empty to store selected file)", fg='white', bg='grey10')
+        w23.pack(side = tkinter.TOP)
         
-        w31 = tkinter.Label(frame, text="Select cluster node:")
+        w31 = tkinter.Label(frame, text="Select node:", fg='white', bg='grey10')
         w31.pack(side = tkinter.TOP, anchor = tkinter.W)
 
         varGr31 = tkinter.StringVar()
@@ -201,12 +206,12 @@ class App:
         rbutt={}
         for j in range(min(len(IPs),9)): # only up to 9 IPs shown
                 rbutt[IPs[j]] = tkinter.Radiobutton(frame, variable=varGr31, text=IPs[j], value=IPs[j],
-                                        command=self.ipsel)
+                                        command=self.ipsel, fg='white', bg='grey10',selectcolor='#222222')
                 rbutt[IPs[j]].pack(anchor=tkinter.W)
 
 
         if len(IPs)==0:
-            print("ERROR: no cluster nodes found...")
+            print("ERROR: no nodes found...")
             exit()
         # pre-select one IP
         self.mtype() # disable IPs radio button without the default chat service
@@ -214,46 +219,46 @@ class App:
 
         IP_sel = IPs[0] #TODO select best ping?
    
-        w8 = tkinter.Label(frame, text="AnuuChat message to send:")
+        w8 = tkinter.Label(frame, text="AnuuChat message to send:", fg='white', bg='grey10')
         w8.pack(side = tkinter.TOP, anchor = tkinter.W)
        
         vcmd2 = (frame.register(self.callbackE2))
-        w9 = tkinter.Entry(frame, validate='all', validatecommand=(vcmd2, '%P'), width=75) 
+        w9 = tkinter.Entry(frame, validate='all', validatecommand=(vcmd2, '%P'), width=75, bg='grey88') 
         w9.insert(0,chat_msg)
         w9.pack(side = tkinter.TOP, anchor = tkinter.W)
 
-        w6 = tkinter.Label(frame, text="AnuuChat recipient's address (leave blank for all):")
+        w6 = tkinter.Label(frame, text="AnuuChat recipient's address (leave blank for all):", fg='white', bg='grey10')
         w6.pack(side = tkinter.TOP, anchor = tkinter.W)
        
         vcmd3 = (frame.register(self.callbackE3))
-        w7 = tkinter.Entry(frame, validate='all', validatecommand=(vcmd3, '%P'), width=15) 
+        w7 = tkinter.Entry(frame, validate='all', validatecommand=(vcmd3, '%P'), width=15, bg='grey88') 
         w7.insert(0,dest_address)
         w7.pack(side = tkinter.TOP, anchor = tkinter.W)
         
         self.button = tkinter.Button(
-                frame, text="QUIT", command=self.quitting
+                frame, text="QUIT", command=self.quitting, fg='white', bg='black'
                 )
         self.button.pack(side = tkinter.RIGHT)
               
         self.conn = tkinter.Button(
-                frame, text="Connect", command=conn
+                frame, text="Connect", command=conn, fg='white', bg='black'
                 )
         self.conn.pack(side = tkinter.LEFT)
 
         self.deconn = tkinter.Button(
-                frame, text="Disconnect", command=disconn
+                frame, text="Disconnect", command=disconn, fg='white', bg='black'
                 )
         self.deconn.pack(side = tkinter.LEFT)
 
         self.send = tkinter.Button(
-                frame, text="Send Msg", command=prepare_msg
+                frame, text="Send Msg", command=prepare_msg, fg='white', bg='black'
                 )
         self.send.pack(side = tkinter.LEFT)
 
         
         frame.pack()
 
-        tempstr="Current list of "+str(len(nodeslist))+" L3 nodes of AnuuTech Network."
+        tempstr="Current list of "+str(len(nodeslist))+" Layer-3 nodes of AnuuTech Network."
         mlist.insert(0,tempstr)
         
 
@@ -265,7 +270,7 @@ class App:
         root.destroy()
 
     def mtype(self):
-        global msgtype
+        global msgtype, nodeslist, nodeslist_chat, nodeslist_poh, nodeslist_ds
         msgtype = int(varGr.get())
         if msgtype==0:
             ts="CHAT"
@@ -334,6 +339,7 @@ class App:
                                
 root = tkinter.Tk()
 root.title(Title)
+root.configure(bg='grey10')
 
 def conn():
     global connected
@@ -718,7 +724,9 @@ def cleanall():
 
 #MAIN CALL
 app=App(root)
+
 root.mainloop()
+
 #below happened at closure from CTRL-C
 connected=False
 
