@@ -34,7 +34,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
  
     def _msg_process(self, msg, hdrs):
 
-        if (hdrs.get('type')=='SAVE_DATA' or hdrs.get('type')=='SAVE_DATA_REPLICATE'): #and hdrs.get('dest_uid') == self._uid):
+        if (msg.get('type')=='SAVE_DATA' or msg.get('type')=='SAVE_DATA_REPLICATE'): #and hdrs.get('dest_uid') == self._uid):
             # Hash file content
             file_hash=binascii.hexlify((SHA256.new(msg['content'].encode())).digest()).decode()
 
@@ -50,11 +50,10 @@ class ServiceRunning(ReconnectingNodeConsumer):
             #hiding IP of level 1/2 nodes
             hdrs_cli['sender_node_IP']=''
             hdrs_cli['sender_uid']=self._uid
-            hdrs_cli['type']='DATA_SAVED'
             msgback=self._initmsg()
             msgback['uid']=msg['uid'] #keeps the same id so that the client knows which file it was
-            msgback['content']='File saved, hash is in content_hash'
-            msgback['content_hash']=file_hash
+            msgback['type']='DATA_SAVED'
+            msgback['content']=file_hash
             self.LOGGER.info("Data storage sends back confirmation msg "+str(msgback['uid'])+" " +str(hdrs))
             self._msgs_to_send.append([msgback, hdrs_cli, hdrs_cli['dest_IP'], 'L3'])
 
@@ -68,9 +67,9 @@ class ServiceRunning(ReconnectingNodeConsumer):
             self._updateDB('data_storage_files', db_query, db_values_toset)
             self.LOGGER.info("Hash sent to data storage files on DB" +str(db_query))
 
-            if hdrs['type'] == 'SAVE_DATA':
+            if msg.get('type') == 'SAVE_DATA':
                 # Send file to other nodes, up to min number of replica
-                hdrs['type']='SAVE_DATA_REPLICATE'
+                msg['type']='SAVE_DATA_REPLICATE'
                 # Get a node on lower layer node with corresponding service
                 nodes_cs=[]
                 for n in self._nodeslist:
@@ -92,7 +91,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
                         else:
                             self.LOGGER.warning("One "+self._nodelevel+" node has no IP set! Impossible to replicate msg "+msg['uid']+"!") 
 
-        if (hdrs.get('type')=='GET_DATA'):
+        if (msg.get('type')=='GET_DATA'):
             # Check if Data are stored locally file content
             listoffiles = next(walk(self.DATA_STORAGE_PATH), (None, None, []))[2]
             if msg['content'] in listoffiles:
@@ -101,9 +100,12 @@ class ServiceRunning(ReconnectingNodeConsumer):
                     msg['content']=json.load(filedata)
                 # Send it back to client
                 self._sends_back(msg, hdrs,'DATA_LOADED')
-            elif hdrs.get('retry') < 3:
+            elif msg.get('trials') is None or msg.get('trials') < 3: # 'or' is lazy
                 # Forward message to another potential node
-                hdrs['retry']=hdrs['retry']+1
+                if msg.get('trials') is None:
+                    msg['trials']=1
+                else:
+                    msg['trials']=msg['trials']+1
                 # Get list of nodes storing the corresponding file
                 nodes_uid=self._get_file_list(msg['content'])
                 if len(nodes_uid)==0: # hash has not been found in any node
@@ -137,7 +139,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
         #hiding IP of level 1/2 nodes
         hdrs_cli['sender_node_IP']=''
         hdrs_cli['sender_uid']=self._uid
-        hdrs_cli['type']=htype
+        msg['type']=htype
         self.LOGGER.info("Sending back "+str(msg['uid'])+" " +str(hdrs))
         self._msgs_to_send.append([msg, hdrs_cli, hdrs_cli['dest_IP'], 'L3'])
 
@@ -181,15 +183,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
             return []
         
     def _ticking_actions(self):
-        #nodelist updated from file
-        if os.path.isfile(self.NODESLIST_PATH):
-            with open(self.NODESLIST_PATH, 'r') as nodes_file:
-                self._nodeslist=json.load(nodes_file)
-
-        #lower nodelist updated from file
-        if os.path.isfile(self.NODESLIST_LOWER_PATH):
-            with open(self.NODESLIST_LOWER_PATH, 'r') as nodes_file:
-                self._nodeslist_lower=json.load(nodes_file)
+        super()._ticking_actions()
 
         #write DATA_STORAGE_STAT_PATH stats to file
         with open(self.DATA_STORAGE_STAT_PATH, 'w') as pst_file:

@@ -3,6 +3,7 @@ import time
 import tkinter
 from tkinter import filedialog
 import threading
+import copy
 import socket
 import random
 import string
@@ -54,8 +55,9 @@ client_uid_path='client_uid.file'
 pubkey_path='atclient_pubkey.file'
 privkey_path='atclient_privkey.file'
 contacts={}
-msg_waiting=[]
+chat_msg_waiting=[]
 file_hash=''
+tx_sent={} # msg UID + hash + verified
 
 
 
@@ -414,122 +416,145 @@ def keepconnection():
             continue
 
 def msgconsumer(ch, method, properties, body):
-    global name, contacts, msg_waiting, IP_sel, nodeslist_poh, defaultL3nodes
+    global name, contacts, chat_msg_waiting, IP_sel, nodeslist_poh, defaultL3nodes
     global file_hash, hashh
     hdrs=properties.headers
     LOGGER.info(hdrs)
     msg= json.loads(body.decode("utf-8"))
     LOGGER.info(msg)
-    if hdrs.get('type')=='CHAT':
-        LOGGER.info("AnuuChat Received " + msg['content'])
+    if msg.get('type')=='CHAT':
+        LOGGER.info("AnuuChat Received " + msg['uid'])
         if hdrs.get('sender_uid')==client_uid and hdrs.get('dest_all')=='clients':
-            mlist.insert(0,'AnuuChat: Own general message received back: "' + str(msg['content']+'"'))
+            mlist.insert(0,'AnuuChat: Own general message received back: "' + str(msg['content'].get('chat_msg'))+'"')
         elif hdrs.get('dest_uid')==client_uid:
             #Private message
-            decrypted_msg = PRK.decrypt(base64.b64decode(msg['content'])).decode()
-            xm="AnuuChat: Private encrypted message received from "+str(msg['username'])+ ': "' + str(decrypted_msg+'"')
+            decrypted_msg = json.loads(PRK.decrypt(base64.b64decode(msg['content'].encode())).decode())
+            xm="AnuuChat: Private encrypted message received from "+str(decrypted_msg.get('username'))+ ': "' + str(decrypted_msg.get('chat_msg'))+'"'
             mlist.insert(0,str(xm))
         elif hdrs.get('sender_uid').strip() != client_uid.strip():
             #General message
-            xm="AnuuChat: General message received from "+str(msg['username'])+ ': "' + str(msg['content']+'"')
+            xm="AnuuChat: General message received from "+str(msg['content'].get('username'))+ ': "' + str(msg['content'].get('chat_msg'))+'"'
             mlist.insert(0,str(xm))
             
-    elif hdrs.get('type')=='CHAT-PUK':
-        xm="AnuuChat: Encryption request from "+str(msg['username'])
+    elif msg.get('type')=='CHAT-PUK':
+        xm="AnuuChat: Encryption request from "+str(msg['content'].get('username'))
         mlist.insert(0,str(xm))
-        if hdrs.get('sender_uid') is not None and msg.get('pubk') is not None:
-            contacts[hdrs.get('sender_uid')] = msg.get('pubk')
+        if hdrs.get('sender_uid') is not None and msg['content'].get('pubk') is not None:
+            contacts[hdrs.get('sender_uid')] = msg['content'].get('pubk')
             LOGGER.debug('Updated contacts:' + str(contacts))
-        if hdrs.get('dest_uid')==client_uid and msg['content'] != 'Done' :
+        if hdrs.get('dest_uid')==client_uid and msg['content'].get('chat_msg') != 'Done' :
             # send a puk message
             msg=initmsg()
             msgtype=0
-            msg['pubk']=public_key.exportKey('PEM').decode()
-            msg['content']='Done'
-            msg['username']=name
+            msg['content']['pubk']=public_key.exportKey('PEM').decode()
+            msg['content']['chat_msg']='Done'
+            msg['content']['username']=name
+            msg['type']='CHAT-PUK'
             headers=initheaders()
             headers['service']='chat'
             headers['dest_uid']=hdrs.get('sender_uid')
-            headers['type']='CHAT-PUK'
             send_msg(headers, msg, msgtype)
 
-    elif (hdrs.get('type')=='POH_L3_R1_DONE' and hdrs.get('dest_uid')==client_uid):
-        # get all infos from DB
-        random.shuffle(defaultL3nodes)
-        IP_DB=defaultL3nodes[0] # TODO get all net storage available nodes
-        db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_DB+':27017/?authMechanism=DEFAULT&authSource=admin'
-        db_client = pymongo.MongoClient(db_url)
-        at_db = db_client["AnuuTechDB"]
-        tx_col = at_db["transactions_pending"]
-        db_query = { "uid": msg['uid'] }
-        x=tx_col.find_one(db_query)
-        if x is None:
-            LOGGER.info("PoH " + str(msg['uid'])+" received back but no input in DB exists!")
+    elif (msg.get('type')=='POH_L3_R1_DONE' and hdrs.get('dest_uid')==client_uid):
+        # Check that it is one of our own msg
+        own_msg= False
+        if msg['uid'] in tx_sent.keys():
+            if tx_sent[msg['uid']]['hash'] == msg['content']['tx_hash']:
+                tx_sent[msg['uid']]['verified'] = 1
+                own_msg=True
+                LOGGER.info("PoH R1 Received " + str(msg['content']['tx']))
+                mlist.insert(0,"PoH R1 received back: "+str(msg['content']['tx']))
+        if not own_msg:
+            LOGGER.info("PoH R1 Received IS NOT OUR OWN MSG!")
+            mlist.insert(0,"PoH R1 Received IS NOT OUR OWN MSG!")
         else:
-            # get node signer public key
-            node_col=at_db["nodes"]
-            db_query = { "uid": x.get('node_uid') }
-            y=node_col.find_one(db_query)
-            if y is None:
-                LOGGER.info("Node " + str(x.get('node_uid'))+" is not found in DB!")
+            # OPTIONAL LOCAL CHECK
+            # get all infos from DB
+            random.shuffle(defaultL3nodes)
+            IP_DB=defaultL3nodes[0] # TODO get all net storage available nodes
+            db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_DB+':27017/?authMechanism=DEFAULT&authSource=admin'
+            db_client = pymongo.MongoClient(db_url)
+            at_db = db_client["AnuuTechDB"]
+            tx_col = at_db["transactions_pending"]
+            db_query = { "uid": msg['uid'] }
+            x=tx_col.find_one(db_query)
+            if x is None:
+                LOGGER.info("PoH R1 " + str(msg['uid'])+" received back but no input in DB exists!")
             else:
-                nodepubkey=RSA.importKey(y.get('pubkey'))
-                #Verify fingerprint
-                hh=SHA256.new(x.get('content').encode())
-                hh.update(x.get('content_hash').encode())
-                hh.update(str(x.get('timestamp')).encode())
-                verifier = PKCS115_SigScheme(nodepubkey)
-                try:
-                    verifier.verify(hh, x.get('fingerprint'))
-                    LOGGER.info("Msg " + str(msg['uid'])+" has been validly signed by "
-                                +str(x.get('node_uid')))
-                except:
-                    LOGGER.info("Msg " + str(msg['uid'])+" has NOT BEEN VALIDLY signed by "
-                                +str(x.get('node_uid')))
-
-        LOGGER.info("PoH Received " + str(msg['content']))
-        mlist.insert(0,"PoH: Message received back: "+str(msg['content']))
+                # get node signer public key
+                node_col=at_db["nodes"]
+                db_query = { "uid": x.get('node_uid') }
+                y=node_col.find_one(db_query)
+                if y is None:
+                    LOGGER.info("Node " + str(x.get('node_uid'))+" is not found in DB!")
+                else:
+                    nodepubkey=RSA.importKey(y.get('pubkey'))
+                    #Verify fingerprint
+                    hh=SHA256.new(x.get('tx').encode())
+                    hh.update(x.get('tx_hash').encode())
+                    hh.update(str(x.get('timestamp')).encode())
+                    verifier = PKCS115_SigScheme(nodepubkey)
+                    try:
+                        verifier.verify(hh, x.get('fingerprint'))
+                        LOGGER.info("Msg " + str(msg['uid'])+" has been validly signed by "
+                                    +str(x.get('node_uid')))
+                    except:
+                        LOGGER.info("Msg " + str(msg['uid'])+" has NOT BEEN VALIDLY signed by "
+                                    +str(x.get('node_uid')))
+            #send to a second node
+            # Select L3 node based on hash (sum of all characters), restricted to nodes with poh service
+            if len(nodeslist_poh) != 0:
+                node_uid=list(nodeslist_poh.keys())[(sum(msg['content']['fingerprint'].encode()))%len(nodeslist_poh.keys())]
+                headers=initheaders()
+                headers['service']='poh'
+                headers['dest_uid']=node_uid
+                msg['type']='POH_L3_R2'
+                
+                LOGGER.info("msg POH R2 prepared to be sent: "+str(headers))
+            else:
+                LOGGER.info("Cannot send PoH R2 msg, no node with service active found!")
+                mlist.insert(0,"Cannot send PoH R2 msg, no node with service active found!")
         
-    elif (hdrs.get('type')=='DATA_SAVED' and hdrs.get('dest_uid')==client_uid):
+    elif (msg.get('type')=='DATA_SAVED' and hdrs.get('dest_uid')==client_uid):
         if file_hash == '':
-            file_hash=msg['content_hash']
+            file_hash=msg['content']
             hashh.delete(0,'end')
-            hashh.insert(0, msg['content_hash'])
+            hashh.insert(0, msg['content'])
             mlist.insert(0,"Data storage: confirmation of file successfully stored on: "+hdrs['sender_uid'])
         else:
-            if file_hash==msg['content_hash']:
+            if file_hash==msg['content']:
                 mlist.insert(0,"Data storage: confirmation of file successfully stored on: "+hdrs['sender_uid'])
             else:
-                file_hash=msg['content_hash']
+                file_hash=msg['content']
                 hashh.delete(0,'end')
-                hashh.insert(0, msg['content_hash'])
+                hashh.insert(0, msg['content'])
                 mlist.insert(0,"Data storage: A new file has been sucessfully stored on: "+hdrs['sender_uid'])
 
-    elif (hdrs.get('type')=='DATA_LOADED' and hdrs.get('dest_uid')==client_uid):
+    elif (msg.get('type')=='DATA_LOADED' and hdrs.get('dest_uid')==client_uid):
         fileloaded=msg['content']
         mlist.insert(0,"Data storage: file retrieved from: "+hdrs['sender_uid'])
         with open (pathh.get()+".RETRIEVED", "wb") as h_file:
             h_file.write(base64.b64decode(fileloaded))
 
-    elif (hdrs.get('type')=='DATA_NOT_FOUND' and hdrs.get('dest_uid')==client_uid):
+    elif (msg.get('type')=='DATA_NOT_FOUND' and hdrs.get('dest_uid')==client_uid):
         msgh=msg['content']
         mlist.insert(0, msgh)
    
     ch.basic_ack(delivery_tag = method.delivery_tag)
 
     #Check if there are chat messages to send
-    msg_handling=msg_waiting.copy()
+    msg_handling=chat_msg_waiting.copy()
     if len(msg_handling) >0:
         for item in msg_handling:
             if item[0]['dest_uid'] in contacts.keys():
-                msg_waiting.remove(item)
+                chat_msg_waiting.remove(item)
                 #Encrypt and send
                 enc_key=PKCS1_OAEP.new(RSA.importKey(contacts[item[0]['dest_uid']].encode()))
-                item[1]['content']= base64.b64encode(enc_key.encrypt(item[1]['content'].encode())).decode()
+                item[1]['content']= base64.b64encode(enc_key.encrypt(json.dumps(item[1]['content']).encode())).decode()
                 send_msg(item[0],item[1],item[2])
 
 def prepare_msg():
-    global dest_address, name, msg_waiting, chat_msg, nodeslist, nodeslist_chat
+    global dest_address, name, chat_msg_waiting, chat_msg, nodeslist, nodeslist_chat
     global nodeslist_poh, nodeslist_ds, pathh, hashh
     msg=initmsg()
     msgtype=None
@@ -537,49 +562,51 @@ def prepare_msg():
         # CHAT
         if int(varGr.get()) == 0:
             msgtype=0
-            msg['username']=name
+            msgcontent={}
+            msgcontent['username']=name
+            msgcontent['chat_msg']=chat_msg
+            msg['type']='CHAT'
+            msg['content']=msgcontent
             if len(dest_address) == 0:
                 #General message
                 headers=initheaders()
                 headers['service']='chat'
                 headers['dest_all']='clients'
-                headers['type']='CHAT'
-                msg['content']=chat_msg
             else:
                 #Private message
                 headers=initheaders()
                 headers['service']='chat'
                 headers['dest_uid']=dest_address
-                headers['type']='CHAT'
                 if dest_address in contacts.keys():
                     enc_key=PKCS1_OAEP.new(RSA.importKey(contacts[dest_address].encode()))
-                    msg['content']= base64.b64encode(enc_key.encrypt(chat_msg.encode())).decode()
+                    msg['content']= base64.b64encode(enc_key.encrypt(json.dumps(msgcontent).encode())).decode()
                 else:
-                    msg['content']=chat_msg
                     temp=[]
                     temp.append(headers.copy())
-                    temp.append(msg.copy())
+                    temp.append(copy.deepcopy(msg)) # deepcopy is needed since another dict is inside...!!!
                     temp.append(0)
-                    msg_waiting.append(temp)
-                    headers['type']='CHAT-PUK'
-                    msg['pubk']=public_key.exportKey('PEM').decode()
-                    msg['content']= 'PUK attached'
+                    chat_msg_waiting.append(temp)
+                    msg['type']='CHAT-PUK'
+                    msg['content']['pubk']=public_key.exportKey('PEM').decode()
+                    msg['content']['chat_msg']= 'PUK attached'
 
             LOGGER.info("msg prepared to be sent: chat:" + str(msg['content']))
         # PoH_L3_R1    
         elif int(varGr.get()) == 3:
             msgtype=3
             # Hash message
-            msg['content']= chat_msg
-            msg['content_hash']=binascii.hexlify((SHA256.new(chat_msg.encode())).digest()).decode()
+            msg['content']={}
+            msg['content']['tx']=chat_msg
+            msg['content']['tx_hash']=binascii.hexlify((SHA256.new(chat_msg.encode())).digest()).decode()
             # Select L3 node based on hash (sum of all characters), restricted to nodes with poh service
             if len(nodeslist_poh) != 0:
-                node_uid=list(nodeslist_poh.keys())[(sum(msg['content_hash'].encode()))%len(nodeslist_poh.keys())]
+                node_uid=list(nodeslist_poh.keys())[(sum(msg['content']['tx_hash'].encode()))%len(nodeslist_poh.keys())]
                 headers=initheaders()
                 headers['service']='poh'
                 headers['dest_uid']=node_uid
-                headers['type']='POH_L3_R1'
+                msg['type']='POH_L3_R1'
                 LOGGER.info("msg prepared to be sent: "+str(headers))
+                tx_sent[msg['uid']]={'hash': msg['content']['tx_hash'], 'verified':0}
             else:
                 LOGGER.info("Cannot send PoH msg, no node with service active found!")
                 mlist.insert(0,"Cannot send PoH msg, no node with service active found!")
@@ -594,7 +621,7 @@ def prepare_msg():
             elif len(hashh.get())<10: #sending file
                 with open (pathh.get(), "rb") as tfile:
                     tempfile=tfile.read()
-                headers['type']='SAVE_DATA'
+                msg['type']='SAVE_DATA'
                 msg['content']= base64.b64encode(tempfile).decode()
                 LOGGER.info("File saving prepared to be sent: "+str(headers))
             else: #getting file back
@@ -626,7 +653,7 @@ def send_msg(headers, msg, msgtype):
                                properties=pika.BasicProperties(headers=headers),
                                body=(json.dumps(msg)))
         if msgtype == 0:
-            if headers.get('type')=='CHAT':
+            if msg.get('type')=='CHAT':
                 mlist.insert(0,"AnuuChat: Message sent.")
             else:
                 mlist.insert(0,"AnuuChat: Encryption request sent.")
@@ -647,12 +674,11 @@ def send_msg(headers, msg, msgtype):
 
 def initmsg():
     msg_empty = {
-    "uid": randomstring(12),
-    "username": "",
-    "content": "some client data",
-    "content_hash": "used for PoH",
-    "pubk": "empty"
-    }
+        'uid': randomstring(12),
+        'content': {},
+        'type': ''
+        'timestamp':time.time()
+        }
     return msg_empty
 
 def initheaders():
@@ -663,8 +689,6 @@ def initheaders():
         'dest_IP': '',
         'dest_all': '',
         'service': '',
-        'type': '',
-        'hop': 0,
         'retry': 0
         }
     return basic_headers

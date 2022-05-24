@@ -500,6 +500,15 @@ class ReconnectingNodeConsumer(object):
         t.start()
 
     def _ticking_actions(self):
+        #nodelist updated from file
+        if os.path.isfile(self.NODESLIST_PATH):
+            with open(self.NODESLIST_PATH, 'r') as nodes_file:
+                self._nodeslist=json.load(nodes_file)
+
+        #lower nodelist updated from file
+        if os.path.isfile(self.NODESLIST_LOWER_PATH):
+            with open(self.NODESLIST_LOWER_PATH, 'r') as nodes_file:
+                self._nodeslist_lower=json.load(nodes_file)
         return
 
     # Consumer method
@@ -523,13 +532,13 @@ class ReconnectingNodeConsumer(object):
         return True
         
     def _initmsg(self):
-        basic_msg = {
-        "uid": self.randomstring(12),
-        "content": "some client data",
-        "content_hash": "used for HMES",
-        "pubk": "empty"
-        }
-        return basic_msg
+        msg_empty = {
+            'uid': randomstring(12),
+            'content': {},
+            'type': ''
+            'timestamp':time.time()
+            }
+        return msg_empty
 
     def _initheaders(self):
         basic_headers = {
@@ -539,8 +548,6 @@ class ReconnectingNodeConsumer(object):
             'dest_IP': '',
             'dest_all': '',
             'service': self._service,
-            'type': '',
-            'hop' : 0,
             'retry': 0
             }
         return basic_headers
@@ -581,7 +588,7 @@ class ReconnectingNodeConsumer(object):
             sendingchan.basic_publish(exchange=send_ex, routing_key='all',
                                       properties=pika.BasicProperties(headers=hdrs),
                                       body=(json.dumps(msg)))
-            self.LOGGER.info(str("msg sent: " + hdrs.get('type')))
+            self.LOGGER.info(str("msg sent: " + msg.get('type')))
             sendingconn.close()
         except:
             try:
