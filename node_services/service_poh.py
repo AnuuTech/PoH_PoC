@@ -10,10 +10,21 @@ import time
 
 class ServiceRunning(ReconnectingNodeConsumer):
     POH_STAT_PATH='node_data/poh_stat.file'
+    POH_BLOCKS_PATH='node_data/blocks.file'
     _poh_stats={}
+    _poh_blocks=[]
 
     def _initnode(self):
         super()._initnode()
+        #Load blockchain
+        if os.path.isfile(self.POH_BLOCKS_PATH):
+            with open(self.POH_BLOCKS_PATH, 'r') as b_file:
+                self._poh_blocks=json.load(b_file)
+        else:
+            # Genesis block
+            self._poh_blocks=['120157110_AnnuTech_is_born_74312d646576',
+                              'db841bfc90f2fe1ffad49a9b92421561a4b488ffbe3ae749923f1f7bbfa02d00']
+        
         #PoH stat updated from file
         if os.path.isfile(self.POH_STAT_PATH):
             with open(self.POH_STAT_PATH, 'r') as pst_file:
@@ -106,7 +117,8 @@ class ServiceRunning(ReconnectingNodeConsumer):
                     LOGGER.warning("Cannot send PoH R4 msg, no node with service active found!")
             else:
                 LOGGER.warning("POH R4 cancelled!")
-                elif (msg.get('type')=='POH_L3_R2' and (hdrs.get('dest_uid') == self._uid or
+
+        elif (msg.get('type')=='POH_L3_R2' and (hdrs.get('dest_uid') == self._uid or
                                                 hdrs.get('dest_IP') == self._own_IP)):
             # SECOND L2 NODE
             # first L2 node signature check
@@ -201,15 +213,18 @@ class ServiceRunning(ReconnectingNodeConsumer):
         return True
 
     def _signature_verif(self, tx, tx_hash, timestamp, fingerprint, node_uid):
-        # get pubkey from DB
-        random.shuffle(defaultL3nodes)
-        IP_DB=defaultL3nodes[0] # TODO get all net storage available nodes
+        # get pubkey from DB # TODO get all net storage available nodes
+        if len(self._nodeslist)==0:
+            LOGGER.info("No node with net storage are available at "+self._nodelevel+"!")
+            return False
+        random.shuffle(self._nodeslist)
+        IP_DB=self._nodeslist[0] 
         db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_DB+':27017/?authMechanism=DEFAULT&authSource=admin'
-        db_client = pymongo.MongoClient(db_url)
-        at_db = db_client["AnuuTechDB"]
-        nodes_col = at_db["nodes"]
-        db_query = { "uid": node_uid }
-        y=node_col.find_one(db_query)
+        with pymongo.MongoClient(db_url) as db_client:
+            at_db = db_client["AnuuTechDB"]
+            nodes_col = at_db["nodes"]
+            db_query = { "uid": node_uid }
+            y=node_col.find_one(db_query)
         if y is None:
             LOGGER.info("Node " + str(node_uid)+" is not found in DB!")
         else:
@@ -240,8 +255,11 @@ class ServiceRunning(ReconnectingNodeConsumer):
     def _ticking_actions(self):
         super()._ticking_actions()
 
-        #do the consensus
-        self._consensing()
+        if self._nodelevel == 'L1':
+            #check the blocks
+            self._check_blocks()
+            #do the consensus
+            self._consensing()
         
         #write poh stats to file
         with open(self.POH_STAT_PATH, 'w') as pst_file:
@@ -250,24 +268,102 @@ class ServiceRunning(ReconnectingNodeConsumer):
         self._stat_updateDB()        
         return
 
-    def _consensing(self):
-        # Check latest blocks on all L1 nodes
-        nb_same_block
-        nb_previous_block
-        nb_block_diff=[] #ordered
-        nb_majority=nb_tot_nodes/2+1
-        if nb_block_diff[0] > nb_majority:
-            # switch to chain [0]
-        elif nb_block_diff[0] > nb_same_block+nb_previous_block: # ex: same: 25, 0: 30, 1: 10, prev: 3
-            # switch to chain [0]
-        else:
-            # stay on current chain
+##    def _consensing(self):
+##        # Check latest blocks on all L1 nodes
+##        nb_same_block
+##        nb_previous_block
+##        nb_block_diff=[] #ordered
+##        nb_majority=nb_tot_nodes/2+1
+##        if nb_block_diff[0] > nb_majority:
+##            # switch to chain [0]
+##        elif nb_block_diff[0] > nb_same_block+nb_previous_block: # ex: same: 25, 0: 30, 1: 10, prev: 3
+##            # switch to chain [0]
+##        else:
+##            # stay on current chain
 
         # Gets all pending txs of current epoch which are eligible
         # creates a new block hash with all 3 fingerprints of all eligible txs and the previous block hash
         # Puts new block into own copy of blockchain
 
+    def _check_blocks(self):
+        # get latest blocks from DB
+        if len(self._nodeslist)==0:
+            LOGGER.warning("No node with net storage are available at L1, no way to check blocks!")
+            return
+        random.shuffle(self._nodeslist)
+        IP_DB=self._nodeslist[0] 
+        db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_DB+':27017/?authMechanism=DEFAULT&authSource=admin'
+        with pymongo.MongoClient(db_url) as db_client:
+            at_db = db_client["AnuuTechDB"]
+            nodes_col = at_db["nodes"]
+            db_query = { "level": "L1"}
+            db_filter = {"IP_address":1, "uid":1, "_id":0, "blocks":1}
+            nodeslist=list(nodes_col.find(db_query, db_filter))
+        if nodeslist is None or len(nodeslist) == 0:
+            self.LOGGER.warning("No valid nodes have been found at L1 for checking blocks!")
+            return
+        blocks=[]
+        for n in nodeslist:
+            if 'blocks' in n:
+                if 'current' in n['blocks'] and 'previous' in n['blocks'] and 'length' in n['blocks']:
+                    blocks.append([n['blocks']['current'],n['blocks']['previous'], n['blocks']['length']])
 
+        # sort by chains
+        # get chains lengths in a descending order
+        chains={}# {current hash: [length nb_same previous_hash]}
+        lengths=sorted(list(set([i[2] for i in blocks])), reverse= True) #list(set()) to remove duplicates
+        ct=Counter(tuple(item) for item in blocks).most_common()
+        # get all chains with different set of "current hash and length"
+        for l in lengths: # for all lengths in a decreasing order
+            for c in ct: # for all triplets current, previous, length
+                if c[0][2]==l: # if length is the one we are looking at now
+                    if c[0][0] not in chains.keys(): # if chain (current hash) is not already listed
+                        chains[c[0][0]]=[l, c[1], c[0][1]] # create an entry into chains, with the number of occurence
+                    else:
+                        if chains[c[0][0]][0]!=l: # if chain already exists but length of chain is not the same
+                            # keeps the chain length with the most occurences
+                            if chains[c[0][0]][1] < c[1]:
+                                chains[c[0][0]]=[l, c[1], c[0][1]]
+                        else: # chain already exists with same length but different previous block
+                            pass #keep the chain with the highest nb of occurence (which was already entered since blocks are considered in decreasing occurence order)
+
+
+        # get nb of chains
+        nb_chains=0
+        for c in chains.keys():
+            nb_chains=nb_chains+chains[c][1]
+
+        # check which chain we belong to and compare occurence
+        own_occ=0
+        max_occ=0
+        max_occ_chains=[]
+        for c in chains.keys():
+            if chains[c][1] > max_occ:
+                max_occ=chains[c][1]
+                max_occ_chains=[c]
+            elif chains[c][1] == max_occ:
+                max_occ_chains.append(c)
+            if c == own_blocks[0] and chains[c][2] == own_blocks[1] and chains[c][0] == own_blocks[2]:
+                own_occ= chains[c][1]
+
+        # decide what chain to follow
+        if own_occ == max_occ: # stay on chain
+            pass
+        elif max_occ > nb_chains/2: # there is a dominating chain and we are not on it:
+            # Switch chain TODO privilege longest chain if several existing?
+            own_blocks[0]=max_occ_chains[0]
+            own_blocks[1]=chains[max_occ_chains[0]][2]
+            own_blocks[2]=chains[max_occ_chains[0]][0]
+        elif time.time()>10: # all nodes should have had time to compute next block
+            # Switch chain TODO privilege longest chain if several existing?
+            own_blocks[0]=max_occ_chains[0]
+            own_blocks[1]=chains[max_occ_chains[0]][2]
+            own_blocks[2]=chains[max_occ_chains[0]][0]
+        else:
+            pass # for now stay on chain
+            
+          
+        
     def _stat_updateDB(self):
         # Determine total sum of messages processed
         tot=0

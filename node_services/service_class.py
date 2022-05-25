@@ -535,7 +535,7 @@ class ReconnectingNodeConsumer(object):
         msg_empty = {
             'uid': randomstring(12),
             'content': {},
-            'type': ''
+            'type': '',
             'timestamp':time.time()
             }
         return msg_empty
