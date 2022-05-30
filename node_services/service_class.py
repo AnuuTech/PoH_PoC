@@ -635,6 +635,42 @@ class ReconnectingNodeConsumer(object):
                 e = sys.exc_info()[1]
                 self.LOGGER.critical('Impossible to send a message, message discarded! %s' %str(e))
 
+    # Generic method to get infos from AnuuTechDB
+    def _getDB_data(self, collects, db_query, db_filter):
+        try:
+            # get all nodes with net storage service
+            nodes_ns=[]
+            for n in self._nodeslist:
+                if 'services' in n:
+                    if 'net_storage' in n['services']:
+                        if n['services']['net_storage'] == 1:
+                            nodes_ns.append(n)
+            if len(nodes_ns) == 0:
+                self.LOGGER.warning("ERROR! No nodes with net_storage service at "+self._nodelevel+" are available!")
+                return []
+            random.shuffle(nodes_ns)
+            IP_sel=''
+            for j in range(0, len(nodes_ns)):
+                if ('IP_address' in nodes_ns[j] and len(IP_sel)<7):
+                    IP_sel=nodes_ns[j]['IP_address']
+            if len(IP_sel)<7:
+                self.LOGGER.warning("No node with valid IP have been found at "+self._nodelevel+"! Impossible to get list of nodes with hash file!")
+                return []
+            # get data from DB
+            db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
+            with pymongo.MongoClient(db_url) as db_client:
+                at_db = db_client["AnuuTechDB"]
+                res_col = at_db[collects]
+                reslist=list(res_col.find(db_query, db_filter))
+            if reslist is None:
+                self.LOGGER.warning("No valid results have been found from DB!")
+                return []
+            return reslist
+        except:    
+            e = sys.exc_info()[1]
+            self.LOGGER.error('Impossible to get info from DB!!  %s' %str(e))
+            return []
+
     # Generic method to update infos on AnuuTechDB
     def _updateDB(self, collects, db_query, db_values_toset ):
         try:

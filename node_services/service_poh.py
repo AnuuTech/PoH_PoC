@@ -214,11 +214,9 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
     def _signature_verif(self, tx, tx_hash, timestamp, fingerprint, node_uid):
         # get pubkey from DB # TODO get all net storage available nodes
-        if len(self._nodeslist)==0:
-            LOGGER.info("No node with net storage are available at "+self._nodelevel+"!")
-            return False
-        random.shuffle(self._nodeslist)
-        IP_DB=self._nodeslist[0] 
+        db_query = { "uid": node_uid }
+        db_filter = {"_id":0}
+        res=self._getDB_data('nodes', db_query, db_filter) 
         db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_DB+':27017/?authMechanism=DEFAULT&authSource=admin'
         with pymongo.MongoClient(db_url) as db_client:
             at_db = db_client["AnuuTechDB"]
@@ -260,7 +258,11 @@ class ServiceRunning(ReconnectingNodeConsumer):
             self._check_blocks()
             #do the consensus
             self._consensing()
-        
+
+        #save the blocks
+        with open(self.POH_BLOCKS_PATH, 'w') as b_file:
+            b_file.write(json.dumps(self._poh_blocks))
+            
         #write poh stats to file
         with open(self.POH_STAT_PATH, 'w') as pst_file:
             pst_file.write(json.dumps(self._poh_stats))
@@ -285,25 +287,29 @@ class ServiceRunning(ReconnectingNodeConsumer):
         # creates a new block hash with all 3 fingerprints of all eligible txs and the previous block hash
         # Puts new block into own copy of blockchain
 
+
+    def _compute_new_block(self):
+        # get all pending txns from DB
+        db_query = {}
+        db_filter = {"_id":0}
+        res=self._getDB_data('transactions_pending', db_query, db_filter)
+        if len(res) == 0:
+            self.LOGGER.warning("No txs have been found!")
+            return
+
+        # get all nodes public keys
+
+        
     def _check_blocks(self):
         # get latest blocks from DB
-        if len(self._nodeslist)==0:
-            LOGGER.warning("No node with net storage are available at L1, no way to check blocks!")
-            return
-        random.shuffle(self._nodeslist)
-        IP_DB=self._nodeslist[0] 
-        db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_DB+':27017/?authMechanism=DEFAULT&authSource=admin'
-        with pymongo.MongoClient(db_url) as db_client:
-            at_db = db_client["AnuuTechDB"]
-            nodes_col = at_db["nodes"]
-            db_query = { "level": "L1"}
-            db_filter = {"IP_address":1, "uid":1, "_id":0, "blocks":1}
-            nodeslist=list(nodes_col.find(db_query, db_filter))
-        if nodeslist is None or len(nodeslist) == 0:
+        db_query = { "level": "L1"}
+        db_filter = {"IP_address":1, "uid":1, "_id":0, "blocks":1}
+        res=self._getDB_data('nodes', db_query, db_filter)
+        if len(res) == 0:
             self.LOGGER.warning("No valid nodes have been found at L1 for checking blocks!")
             return
         blocks=[]
-        for n in nodeslist:
+        for n in res:
             if 'blocks' in n:
                 if 'current' in n['blocks'] and 'previous' in n['blocks'] and 'length' in n['blocks']:
                     blocks.append([n['blocks']['current'],n['blocks']['previous'], n['blocks']['length']])

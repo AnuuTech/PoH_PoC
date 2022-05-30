@@ -147,7 +147,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 IP_sel=nodes_ns[0]['IP_address']
 
         try:    
-            # query the list of nodes from DB
+            # query the list of nodes from DB 
             db_url='mongodb://admin:' + urllib.parse.quote(self._db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
             with pymongo.MongoClient(db_url) as db_client:
                 at_db = db_client["AnuuTechDB"]
@@ -167,7 +167,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
                                 nodes_down.append(n)
                         else:
                             nodes_down.append(n)# add to delete because node does not have a last view
-                    # delete nodes down from DB   
+                    # delete nodes down from DB # TODO restrict process to delete nodes
                     for n in nodes_down:
                         if 'uid' in n:
                             db_query = { 'uid': n['uid']}
