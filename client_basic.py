@@ -23,7 +23,7 @@ import urllib
 import signal
 signal.signal(signal.SIGINT, signal.default_int_handler) # to ensure Signal to be received
 
-Title="AnuuTech Basic client V-0.0.3"
+Title="AnuuTech Basic client V-0.1.0beta"
 
 #helper function
 def ii_helper(fily, sel):
@@ -103,14 +103,14 @@ if not os.path.isfile(pubkey_path) or not os.path.isfile(privkey_path):
     private_key = RSA.generate(1024)
     public_key = private_key.publickey()
     LOGGER.info('No RSA keys found, new ones are created')
-    with open (privkey_path, "wb") as prv_file:
+    with open (privkey_path, 'wb') as prv_file:
         prv_file.write(private_key.exportKey('PEM','annu_seed-l'))
-    with open (pubkey_path, "wb") as pub_file:
+    with open (pubkey_path, 'wb') as pub_file:
         pub_file.write(public_key.exportKey('PEM'))
 else:
-    with open (privkey_path, "rb") as prv_file:
+    with open (privkey_path, 'rb') as prv_file:
         private_key=RSA.importKey(prv_file.read(),'annu_seed-l')
-    with open (pubkey_path, "rb") as pub_file:
+    with open (pubkey_path, 'rb') as pub_file:
         public_key=RSA.importKey(pub_file.read())
         LOGGER.debug('RSA keys sucessfully loaded.')
 PRK=PKCS1_OAEP.new(private_key)
@@ -146,8 +146,8 @@ class App:
         w0b = tkinter.Text(frame, height=1, fg='white', bg='grey10')
         w0b.insert(1.0, client_uid)
         w0b.pack(side = tkinter.TOP, anchor = tkinter.W)
-        w0b.configure(bg=frame.cget('bg'), relief="flat")
-        w0b.configure(state="disabled")
+        w0b.configure(bg=frame.cget('bg'), relief='flat')
+        w0b.configure(state='disabled')
         
         w2 = tkinter.Label(frame, text="Your name to display:", fg='white', bg='grey10')
         w2.pack(side = tkinter.TOP, anchor = tkinter.W)
@@ -275,7 +275,7 @@ class App:
         global msgtype, nodeslist, nodeslist_chat, nodeslist_poh, nodeslist_ds
         msgtype = int(varGr.get())
         if msgtype==0:
-            ts="CHAT"
+            ts='CHAT'
             for ip in nodeslist.values():
                 if ip not in nodeslist_chat.values():
                     rbutt[ip]['state'] = 'disabled'
@@ -283,7 +283,7 @@ class App:
                     rbutt[ip]['state'] = 'normal'
             varGr31.set(list(nodeslist_chat.values())[0]) # select first IP with service activated
         elif msgtype==3:
-            ts="PoH"
+            ts='PoH'
             for ip in nodeslist.values():
                 if ip not in nodeslist_poh.values():
                     rbutt[ip]['state'] = 'disabled'
@@ -291,7 +291,7 @@ class App:
                     rbutt[ip]['state'] = 'normal'
             varGr31.set(list(nodeslist_poh.values())[0]) # select first IP with service activated
         elif msgtype==4:
-            ts="Data Storage"
+            ts='Data Storage'
             for ip in nodeslist.values():
                 if ip not in nodeslist_ds.values():
                     rbutt[ip]['state'] = 'disabled'
@@ -420,7 +420,7 @@ def msgconsumer(ch, method, properties, body):
     global file_hash, hashh
     hdrs=properties.headers
     LOGGER.info(hdrs)
-    msg= json.loads(body.decode("utf-8"))
+    msg= json.loads(body.decode('utf-8'))
     LOGGER.info(msg)
     if msg.get('type')=='CHAT':
         LOGGER.info("AnuuChat Received " + msg['uid'])
@@ -474,42 +474,47 @@ def msgconsumer(ch, method, properties, body):
             IP_DB=defaultL3nodes[0] # TODO get all net storage available nodes
             db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_DB+':27017/?authMechanism=DEFAULT&authSource=admin'
             db_client = pymongo.MongoClient(db_url)
-            at_db = db_client["AnuuTechDB"]
-            tx_col = at_db["transactions_pending"]
-            db_query = { "uid": msg['uid'] }
+            at_db = db_client['AnuuTechDB']
+            tx_col = at_db['transactions']
+            db_query = { 'uid': msg['uid'] }
             x=tx_col.find_one(db_query)
             if x is None:
                 LOGGER.info("PoH R1 " + str(msg['uid'])+" received back but no input in DB exists!")
             else:
                 # get node signer public key
-                node_col=at_db["nodes"]
-                db_query = { "uid": x.get('node_uid') }
+                node_col=at_db['nodes']
+                db_query = { 'uid': x.get('signer_nodeL3') }
                 y=node_col.find_one(db_query)
                 if y is None:
-                    LOGGER.info("Node " + str(x.get('node_uid'))+" is not found in DB!")
+                    LOGGER.info("Node " + str(x.get('signer_nodeL3'))+" is not found in DB!")
                 else:
-                    nodepubkey=RSA.importKey(y.get('pubkey'))
+                    nodepubkey=RSA.importKey(y.get('pubkey').encode())
                     #Verify fingerprint
                     hh=SHA256.new(x.get('tx').encode())
                     hh.update(x.get('tx_hash').encode())
                     hh.update(str(x.get('timestamp')).encode())
                     verifier = PKCS115_SigScheme(nodepubkey)
                     try:
-                        verifier.verify(hh, x.get('fingerprint'))
+                        verifier.verify(hh, binascii.unhexlify(x.get('fingerprintL3').encode()))
                         LOGGER.info("Msg " + str(msg['uid'])+" has been validly signed by "
-                                    +str(x.get('node_uid')))
+                                    +str(x.get('signer_nodeL3')))
+                        mlist.insert(0,"Msg " + str(msg['uid'])+" has been validly signed by "
+                                    +str(x.get('signer_nodeL3')))
                     except:
                         LOGGER.info("Msg " + str(msg['uid'])+" has NOT BEEN VALIDLY signed by "
-                                    +str(x.get('node_uid')))
+                                    +str(x.get('signer_nodeL3')))
+                        mlist.insert(0,"Msg " + str(msg['uid'])+" has NOT BEEN VALIDLY signed by "
+                                    +str(x.get('signer_nodeL3')))
             #send to a second node
             # Select L3 node based on hash (sum of all characters), restricted to nodes with poh service
             if len(nodeslist_poh) != 0:
-                node_uid=list(nodeslist_poh.keys())[(sum(msg['content']['fingerprint'].encode()))%len(nodeslist_poh.keys())]
+                node_uid=list(nodeslist_poh.keys())[(sum(msg['content']['fingerprintL3'].encode()))%len(nodeslist_poh.keys())]
                 headers=initheaders()
                 headers['service']='poh'
                 headers['dest_uid']=node_uid
                 msg['type']='POH_L3_R2'
-                
+                msgtype=3
+                send_msg(headers, msg, msgtype)
                 LOGGER.info("msg POH R2 prepared to be sent: "+str(headers))
             else:
                 LOGGER.info("Cannot send PoH R2 msg, no node with service active found!")
@@ -533,7 +538,7 @@ def msgconsumer(ch, method, properties, body):
     elif (msg.get('type')=='DATA_LOADED' and hdrs.get('dest_uid')==client_uid):
         fileloaded=msg['content']
         mlist.insert(0,"Data storage: file retrieved from: "+hdrs['sender_uid'])
-        with open (pathh.get()+".RETRIEVED", "wb") as h_file:
+        with open (pathh.get()+".RETRIEVED", 'wb') as h_file:
             h_file.write(base64.b64decode(fileloaded))
 
     elif (msg.get('type')=='DATA_NOT_FOUND' and hdrs.get('dest_uid')==client_uid):
@@ -619,7 +624,7 @@ def prepare_msg():
                 mlist.insert(0,"No file selected!")
                 return
             elif len(hashh.get())<10: #sending file
-                with open (pathh.get(), "rb") as tfile:
+                with open (pathh.get(), 'rb') as tfile:
                     tempfile=tfile.read()
                 msg['type']='SAVE_DATA'
                 msg['content']= base64.b64encode(tempfile).decode()
@@ -706,10 +711,10 @@ def getL3nodesList():
             # get all infos from DB
             db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
             db_client = pymongo.MongoClient(db_url)
-            at_db = db_client["AnuuTechDB"]
-            nodes_col = at_db["nodes"]
-            db_query = { "level": 'L3'}
-            db_filter = {"uid":1, "IP_address":1, "_id":0, "services":1}
+            at_db = db_client['AnuuTechDB']
+            nodes_col = at_db['nodes']
+            db_query = { 'level': 'L3'}
+            db_filter = {'uid':1, 'IP_address':1, '_id':0, 'services':1}
             templist=list(nodes_col.find(db_query, db_filter))
             nodeslist={n['uid']:n['IP_address'] for n in templist }# if (n['services']['net_storage'] == 1}
             nodeslist_chat={n['uid']:n['IP_address'] for n in templist if n['services']['chat'] == 1}

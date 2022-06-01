@@ -86,8 +86,8 @@ class ServiceRunning(ReconnectingNodeConsumer):
         tot=0
         for cc in self._chat_clients_list.keys():
             tot=tot+self._chat_clients_list[cc]
-        db_query = { "uid": self._uid }
-        db_values_toset = {"$set":{"service_chat":{"nb_of_msg_processed": tot}}}
+        db_query = { 'uid': self._uid }
+        db_values_toset = {'$set':{'service_chat':{'nb_of_msg_processed': tot}}}
         # Write to DB
         self._updateDB('nodes', db_query, db_values_toset)
         self.LOGGER.debug("Node information updated on DB, IP = " + str(db_values_toset))

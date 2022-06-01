@@ -14,7 +14,7 @@ import pika
 import threading
 
 class ServiceRunning(ReconnectingNodeConsumer):
-    _NODE_DOWNTIME_LIMIT=1200 #in seconds
+    _NODE_DOWNTIME_LIMIT=900 #in seconds
     
     def _msg_process(self, msg, hdrs):
         # Get a node on lower layer node with corresponding service
@@ -150,12 +150,12 @@ class ServiceRunning(ReconnectingNodeConsumer):
             # query the list of nodes from DB 
             db_url='mongodb://admin:' + urllib.parse.quote(self._db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
             with pymongo.MongoClient(db_url) as db_client:
-                at_db = db_client["AnuuTechDB"]
-                nodes_col = at_db["nodes"]
+                at_db = db_client['AnuuTechDB']
+                nodes_col = at_db['nodes']
                 #service_str='services.'+self._service
-                #db_query = { "level": nodelevel, service_str:0} query for only one service type
-                db_query = { "level": nodelevel}
-                db_filter = {"IP_address":1, "uid":1, "_id":0, "services":1, "last_view":1}
+                #db_query = { 'level': nodelevel, service_str:0} query for only one service type
+                db_query = { 'level': nodelevel}
+                db_filter = {'IP_address':1, 'uid':1, '_id':0, 'services':1, 'last_view':1, 'pubkey':1}
                 nodeslist=list(nodes_col.find(db_query, db_filter))
                 # check if some nodes are not responding anymore (at node level)
                 if nodelevel == self._nodelevel:
@@ -198,21 +198,18 @@ class ServiceRunning(ReconnectingNodeConsumer):
     def _nodeinfo_to_DB(self):
         # Create/Update infos on AnuuTechDB
         # Prepare query in good format
-        pem = self._PUBKEY.exportKey('PEM')
-        db_query = { "uid": self._uid }
-        db_values_toset = {"$set":{"pubkey": pem, "level": self._nodelevel, "last_view" : time.time(),
-                                   "platform": platform.system(), "platform_version": platform.version(),
-                                   "platform_release": platform.release(),# does not work: "cpu_maxspeed_MhZ": psutil.cpu_freq()[2],
-                                   "cpu_avg_usage_percent": (psutil.getloadavg()[0]/ psutil.cpu_count() * 100),
-                                   "mem_total": psutil.virtual_memory()[0], "mem_percent_used": psutil.virtual_memory()[2],
-                                   "disk_total": psutil.disk_usage('/')[0], "disk_percent_used": psutil.disk_usage('/')[3],
-                                   "IP_address": self._own_IP, "SW_version": self.SW_VERSION}}
+        pem = self._PUBKEY.exportKey('PEM').decode()
+        db_query = { 'uid': self._uid }
+        db_values_toset = {'$set':{'pubkey': pem, 'level': self._nodelevel, 'last_view' : time.time(),
+                                   'platform': platform.system(), 'platform_version': platform.version(),
+                                   'platform_release': platform.release(),# does not work: 'cpu_maxspeed_MhZ': psutil.cpu_freq()[2],
+                                   'cpu_avg_usage_percent': (psutil.getloadavg()[0]/ psutil.cpu_count() * 100),
+                                   'mem_total': psutil.virtual_memory()[0], 'mem_percent_used': psutil.virtual_memory()[2],
+                                   'disk_total': psutil.disk_usage('/')[0], 'disk_percent_used': psutil.disk_usage('/')[3],
+                                   'IP_address': self._own_IP, 'SW_version': self.SW_VERSION}}
         self._updateDB('nodes', db_query, db_values_toset)
         # Additional update
-        serv_list={}
-        with open(self.SERVICES_PATH, 'r') as serv_file:
-            serv_list=json.load(serv_file)
-        db_values_toset2 = {"$set":{"services":serv_list}}
+        db_values_toset2 = {'$set':{'services':self._nodeservices}}
         self._updateDB('nodes', db_query, db_values_toset2)
 
     def _exchange_check(self):

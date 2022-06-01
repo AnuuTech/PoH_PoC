@@ -8,7 +8,7 @@ LAUNCHER_PATH='start_node.sh'
 STOPPER_PATH='stop_node.sh'
 IP_PATH='node_data/ip.file'
 
-def starting(nodelevel):
+def startingdef(nodelevel):
     serv_list={}
     if os.path.isfile(SERVICES_PATH):
         with open(SERVICES_PATH, 'r') as serv_file:
@@ -19,13 +19,23 @@ def starting(nodelevel):
                    'poh': 0, 'data_storage': 0}
         with open(SERVICES_PATH, 'w') as serv_file:
                 serv_file.write(json.dumps(serv_list))
-
     print("List of services configured: " + str(serv_list))
+    prepare(nodelevel, serv_list)
 
+def starting(nodelevel,s1, s2, s3, s4):
+    #apply config
+    serv_list={'net_maintenance': 1, 'chat': int(s1), 'net_storage': int(s2),
+               'poh': int(s3), 'data_storage': int(s4)}
+    with open(SERVICES_PATH, 'w') as serv_file:
+        serv_file.write(json.dumps(serv_list))
+    print("List of services configured: " + str(serv_list))
+    prepare(nodelevel, serv_list)
+    
+def prepare(nodelevel, serv_list):
     # Prepare launcher
     with open(LAUNCHER_PATH, 'w') as lau_file:
         for serv in serv_list.keys():
-            if serv_list[serv] == 1:
+            if serv_list[serv] == 1 and serv != 'net_storage':
                 line='nohup python3 -u node_services/service_'+serv+'.py '+nodelevel+' &>/home/logs/output_'+serv+'.log </dev/null &\n'
                 lau_file.write(line)
                 line='echo $! > node_services/python_pid_'+serv+'.file\n'
@@ -46,7 +56,7 @@ def starting(nodelevel):
     # Prepare stopper
     with open(STOPPER_PATH, 'w') as lau_file:
         for serv in serv_list.keys():
-            if serv_list[serv] == 1:
+            if serv_list[serv] == 1 and serv != 'net_storage':
                 line='pid=$(cat node_services/python_pid_'+serv+'.file)\n'
                 lau_file.write(line)
                 line='kill -SIGINT $pid\n'
@@ -57,12 +67,14 @@ def starting(nodelevel):
             
 def main():
     # Check arguments
-    if len(sys.argv) == 2:
+    if len(sys.argv) == 6:
         if sys.argv[1] == 'L1' or sys.argv[1] == 'L2' or sys.argv[1] == 'L3' :
-            nodelevel=sys.argv[1]
-            starting(nodelevel)
+            starting(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+    elif len(sys.argv) == 2:
+        if sys.argv[1] == 'L1' or sys.argv[1] == 'L2' or sys.argv[1] == 'L3' :
+            startingdef(sys.argv[1])
     else:
-        print("Script needs 1 parameter (L1, L2 or L3). Please retry.")
+        print("Script needs 1 or 5 parameters: 1 for L1, L2 or L3 and 4 for services activation. Please retry.")
         exit()
         
 if __name__ == '__main__':

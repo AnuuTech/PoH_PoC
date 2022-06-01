@@ -307,7 +307,7 @@ class ReconnectingNodeConsumer(object):
     Consumer indicates that a reconnect is necessary.
     """
 
-    SW_VERSION='0.0.3'
+    SW_VERSION='0.1.0beta'
     VHOST='anuutech'
     REQ_TIMEOUT=5 #timeout for http requests
     NODE_TICK_INTERVAL=60.0
@@ -352,6 +352,7 @@ class ReconnectingNodeConsumer(object):
         self._own_IP=''
         self._nodelevel = str(xargs)
         self._service = str(yargs)
+        self._nodeservices ={}
         self._node_user='layer_local'
         self._np='pass_'
         self._db_pass=self.ii_helper('node_data/access.bin', '12')
@@ -361,17 +362,17 @@ class ReconnectingNodeConsumer(object):
             # issue keys
             private_key = RSA.generate(1024)
             public_key = private_key.publickey()
-            self.LOGGER.info('No RSA keys found, new ones are created')
-            with open (self.PRIVKEY_PATH, "wb") as prv_file:
+            self.LOGGER.info("No RSA keys found, new ones are created")
+            with open (self.PRIVKEY_PATH, 'wb') as prv_file:
                 prv_file.write(private_key.exportKey('PEM','annu_seed-l'))
-            with open (self.PUBKEY_PATH, "wb") as pub_file:
+            with open (self.PUBKEY_PATH, 'wb') as pub_file:
                 pub_file.write(public_key.exportKey('PEM'))
         else:
-            with open (self.PRIVKEY_PATH, "rb") as prv_file:
+            with open (self.PRIVKEY_PATH, 'rb') as prv_file:
                 private_key=RSA.importKey(prv_file.read(),'annu_seed-l')
-            with open (self.PUBKEY_PATH, "rb") as pub_file:
+            with open (self.PUBKEY_PATH, 'rb') as pub_file:
                 public_key=RSA.importKey(pub_file.read())
-                self.LOGGER.debug('RSA keys sucessfully loaded.')
+                self.LOGGER.debug("RSA keys sucessfully loaded.")
         self._PUBKEY=public_key
         self._PRIVKEY=private_key
 
@@ -396,6 +397,11 @@ class ReconnectingNodeConsumer(object):
         if os.path.isfile(self.UID_PATH):
             with open(self.UID_PATH, 'r') as uid_file:
                 self._uid=uid_file.read().strip()
+
+        #get list of services on the nodes
+        with open(self.SERVICES_PATH, 'r') as serv_file:
+            self._nodeservices=json.load(serv_file)
+            self.LOGGER.info("List of services configured: " + str(self._nodeservices))
       
         #start the regular ticking
         self._ticking() # will init a ticking dameon
@@ -514,7 +520,7 @@ class ReconnectingNodeConsumer(object):
     # Consumer method
     def _node_consumer(self, ch, method, properties, body):
         try:
-            msg=json.loads(body.decode("utf-8"))
+            msg=json.loads(body.decode('utf-8'))
             msgdisp=msg.copy()
             msgdisp['content']='NOT DISPLAYED'
             self.LOGGER.info("Received decode: " + str(msgdisp))
@@ -533,7 +539,7 @@ class ReconnectingNodeConsumer(object):
         
     def _initmsg(self):
         msg_empty = {
-            'uid': randomstring(12),
+            'uid': self.randomstring(12),
             'content': {},
             'type': '',
             'timestamp':time.time()
@@ -635,31 +641,61 @@ class ReconnectingNodeConsumer(object):
                 e = sys.exc_info()[1]
                 self.LOGGER.critical('Impossible to send a message, message discarded! %s' %str(e))
 
+
+    def _get_DBnodeIP(self):
+        # get all nodes with net storage service
+        #nodes_ns=[n for n in self._nodeslist if n['services']['net_storage'] == 1] Replaced by iteration loop to avoid errors
+        nodes_ns=[]
+        for n in self._nodeslist:
+            if 'services' in n:
+                if 'net_storage' in n['services']:
+                    if n['services']['net_storage'] == 1:
+                        nodes_ns.append(n)
+        if len(nodes_ns) == 0:
+            # check if we have the local service
+            if 'net_storage' in self._nodeservices:
+                 if self._nodeservices['net_storage'] == 1:
+                     return 'localhost'
+            self.LOGGER.warning("ERROR! No nodes with net_storage service at "+self._nodelevel+" are available!")
+            return ''
+        random.shuffle(nodes_ns)
+        IP_sel=''
+        for j in range(0, len(nodes_ns)):
+            if ('IP_address' in nodes_ns[j] and len(IP_sel)<7):
+                IP_sel=nodes_ns[j]['IP_address']
+        return IP_sel
+
+
+    # Generic method to get infos from AnuuTechDB
+    def _delete_dataDB(self, collects, db_queries):
+        try:
+            IP_sel=self._get_DBnodeIP()
+            if len(IP_sel)<7:
+                self.LOGGER.warning("No node with valid IP have been found at "+self._nodelevel+"! Impossible to delete data from DB!")
+                return
+            # delete data from DB
+            db_url='mongodb://admin:' + urllib.parse.quote(self._db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
+            with pymongo.MongoClient(db_url) as db_client:
+                at_db = db_client['AnuuTechDB']
+                res_col = at_db[collects]
+                for dq in db_queries:
+                    res_col.delete_one(dq) 
+        except:    
+            e = sys.exc_info()[1]
+            self.LOGGER.error('Impossible to delete data from DB!!  %s' %str(e))
+
+                    
     # Generic method to get infos from AnuuTechDB
     def _getDB_data(self, collects, db_query, db_filter):
         try:
-            # get all nodes with net storage service
-            nodes_ns=[]
-            for n in self._nodeslist:
-                if 'services' in n:
-                    if 'net_storage' in n['services']:
-                        if n['services']['net_storage'] == 1:
-                            nodes_ns.append(n)
-            if len(nodes_ns) == 0:
-                self.LOGGER.warning("ERROR! No nodes with net_storage service at "+self._nodelevel+" are available!")
-                return []
-            random.shuffle(nodes_ns)
-            IP_sel=''
-            for j in range(0, len(nodes_ns)):
-                if ('IP_address' in nodes_ns[j] and len(IP_sel)<7):
-                    IP_sel=nodes_ns[j]['IP_address']
+            IP_sel=self._get_DBnodeIP()
             if len(IP_sel)<7:
-                self.LOGGER.warning("No node with valid IP have been found at "+self._nodelevel+"! Impossible to get list of nodes with hash file!")
+                self.LOGGER.warning("No node with valid IP have been found at "+self._nodelevel+"! Impossible to get data from DB!")
                 return []
             # get data from DB
-            db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
+            db_url='mongodb://admin:' + urllib.parse.quote(self._db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
             with pymongo.MongoClient(db_url) as db_client:
-                at_db = db_client["AnuuTechDB"]
+                at_db = db_client['AnuuTechDB']
                 res_col = at_db[collects]
                 reslist=list(res_col.find(db_query, db_filter))
             if reslist is None:
@@ -668,50 +704,30 @@ class ReconnectingNodeConsumer(object):
             return reslist
         except:    
             e = sys.exc_info()[1]
-            self.LOGGER.error('Impossible to get info from DB!!  %s' %str(e))
+            self.LOGGER.error('Impossible to get data from DB!!  %s' %str(e))
             return []
+
 
     # Generic method to update infos on AnuuTechDB
     def _updateDB(self, collects, db_query, db_values_toset ):
         try:
-            IP_sel=''
-            # Get list of services on the nodes
-            serv_list={}
-            with open(self.SERVICES_PATH, 'r') as serv_file:
-                serv_list=json.load(serv_file)
-                self.LOGGER.info("List of services configured: " + str(serv_list))
-            # Prepare connection to DB
-            # Check if service is available on node
-            if 'net_storage' in serv_list:
-                if serv_list['net_storage'] == 1:
-                    IP_sel='localhost' # use the local service
-            if IP_sel == '':
-                # Select a node from the existing list of nodes #TODO may also check on lower layer nodes!
-                #nodes_ns=[n for n in self._nodeslist if n['services']['net_storage'] == 1] Replaced by iteration loop to avoid errors
-                nodes_ns=[]
-                for n in self._nodeslist:
-                    if 'services' in n:
-                        if 'net_storage' in n['services']:
-                            if (n['services']['net_storage'] == 1):
-                                nodes_ns.append(n)
-                if len(nodes_ns) == 0:
-                    self.LOGGER.warning("No node with net storage service is available, impossible to update own node entry in DB!!")
-                else:           
-                    random.shuffle(nodes_ns)
-                    IP_sel=nodes_ns[0]['IP_address']
-            if len(IP_sel)>0:
-                db_url='mongodb://admin:' + urllib.parse.quote(self._db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
-                with pymongo.MongoClient(db_url) as db_client:
-                    at_db = db_client["AnuuTechDB"]
-                    col = at_db[collects]
-                    if db_values_toset is not None:
-                        # Update/Insert values, using upsert = True
-                        col.update_one(db_query, db_values_toset, True)
-                        self.LOGGER.debug(str(db_values_toset))
-                    else:
-                        # use insert command
-                        col.insert_one(db_query)
-                    self.LOGGER.info("Values updated on DB, own IP = " + self._own_IP)
+            IP_sel=self._get_DBnodeIP()
+            if len(IP_sel)<7:
+                self.LOGGER.warning("No node with valid IP have been found at "+self._nodelevel+"! Impossible to update data to DB!")
+                return
+            # update data to DB
+            db_url='mongodb://admin:' + urllib.parse.quote(self._db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
+            with pymongo.MongoClient(db_url) as db_client:
+                at_db = db_client['AnuuTechDB']
+                col = at_db[collects]
+                if db_values_toset is not None:
+                    # Update/Insert values, using upsert = True
+                    col.update_one(db_query, db_values_toset, True)
+                    self.LOGGER.debug(str(db_values_toset))
+                else:
+                    # use insert command
+                    col.insert_one(db_query)
+                self.LOGGER.info("Values updated on DB, own IP = " + self._own_IP)
         except:    
             e = sys.exc_info()[1]
             self.LOGGER.error('Impossible to updateDB!!  %s' %str(e))

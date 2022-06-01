@@ -59,9 +59,9 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
             # Write on DB
             # Prepare query in good format
-            db_query = { "hash": file_hash }
+            db_query = { 'hash': file_hash }
             size=sys.getsizeof(msg['content'])
-            db_values_toset = {"$set":{self._uid: 'local', 'size' : size}}
+            db_values_toset = {'$set':{self._uid: 'local', 'size' : size}}
 
             # Insert data hash on DB
             self._updateDB('data_storage_files', db_query, db_values_toset)
@@ -145,8 +145,8 @@ class ServiceRunning(ReconnectingNodeConsumer):
         self._msgs_to_send.append([msg, hdrs_cli, hdrs_cli['dest_IP'], 'L3'])
 
     def _get_file_list(self, filehash):
-        db_query = { "hash": filehash}
-        db_filter = {"_id":0, "hash":0, "size":0}
+        db_query = { 'hash': filehash}
+        db_filter = {'_id':0, 'hash':0, 'size':0}
         res=self._getDB_data('data_storage_files', db_query, db_filter)
         if len(res)>0:
             nodes_uid=list(res[0].keys())
@@ -171,8 +171,8 @@ class ServiceRunning(ReconnectingNodeConsumer):
         tot=0
         for cc in self._data_stats.keys():
             tot=tot+self._data_stats[cc]
-        db_query = { "uid": self._uid }
-        db_values_toset = {"$set":{"service_data_storage":{"nb_of_msg_processed": tot}}}
+        db_query = { 'uid': self._uid }
+        db_values_toset = {'$set':{'service_data_storage':{'nb_of_msg_processed': tot}}}
         # Write to DB
         self._updateDB('nodes', db_query, db_values_toset)
         self.LOGGER.debug("Node information updated on DB, IP = " + str(db_values_toset))
