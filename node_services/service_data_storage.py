@@ -88,12 +88,15 @@ class ServiceRunning(ReconnectingNodeConsumer):
                                     self._msgs_to_send.append([msg, hdrs, nodes_cs[j]['IP_address'], self._nodelevel])
                                     sent=sent+1
                                     self.LOGGER.info("msg "+msg['uid']+" forwarded to node with data storage service on node "+nodes_cs[j]['IP_address'])
+                        elif 'IP_address' not in nodes_cs[j]:
+                            self.LOGGER.warning("One "+self._nodelevel+" node has no IP set! Impossible to replicate msg "+msg['uid']+"!")
                         else:
-                            self.LOGGER.warning("One "+self._nodelevel+" node has no IP set! Impossible to replicate msg "+msg['uid']+"!") 
+                            self.LOGGER.info("Maximum number of replica reached.")
 
         if (msg.get('type')=='GET_DATA'):
             # Check if Data are stored locally file content
             listoffiles = next(walk(self.DATA_STORAGE_PATH), (None, None, []))[2]
+            self.LOGGER.debug("Msg content is: "+str(msg['content']))
             if msg['content'] in listoffiles:
                 # Read it
                 with open(self.DATA_STORAGE_PATH+str(msg['content']), 'r') as filedata:

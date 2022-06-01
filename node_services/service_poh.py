@@ -300,18 +300,16 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
         if self._nodelevel == 'L1':
             self.LOGGER.debug("Current Epoch: "+str(divmod(time.time()-self.ET,60)[0]) + " and last block's epoch: "+str(self._poh_blocks[-1][2]))
-            if divmod(time.time()-self.ET,60)[0] > self._poh_blocks[-1][2]:
-                # new epoch just started, compute new block
+            if divmod(time.time()-self.ET,60)[1] > 0 and divmod(time.time()-self.ET,60)[1] < 20: # <20 seconds after epoch starts
+                # a new epoch just started, compute new block
                 self._compute_new_block()
                 # update blocks on DB
                 self._blocks_updateDB()
-                # check the blocks
-                self._check_blocks()
-            elif (time.time()-self.ET)/60 > self._poh_blocks[-1][2]+0.75: # >45 seconds after epoch starts
+            elif divmod(time.time()-self.ET,60)[1] > 45: # >45 seconds after epoch starts
                 # epoch is finishing, finalize and clean pending txs
                 self._finalizing()
             else:
-                # check the blocks
+                # check the blocks (between >20 and <45 seconds after new epoch)
                 self._check_blocks()            
 
         #save the blocks

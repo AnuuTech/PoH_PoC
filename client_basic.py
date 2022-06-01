@@ -521,7 +521,7 @@ def msgconsumer(ch, method, properties, body):
                 mlist.insert(0,"Cannot send PoH R2 msg, no node with service active found!")
         
     elif (msg.get('type')=='DATA_SAVED' and hdrs.get('dest_uid')==client_uid):
-        if file_hash == '':
+        if hashh.get() == '':
             file_hash=msg['content']
             hashh.delete(0,'end')
             hashh.insert(0, msg['content'])
@@ -630,7 +630,7 @@ def prepare_msg():
                 msg['content']= base64.b64encode(tempfile).decode()
                 LOGGER.info("File saving prepared to be sent: "+str(headers))
             else: #getting file back
-                headers['type']='GET_DATA'
+                msg['type']='GET_DATA'
                 msg['content']= hashh.get()
                 LOGGER.info("File loading prepared to be sent: "+str(headers))
             
