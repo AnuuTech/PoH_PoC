@@ -21,6 +21,7 @@ IP_sel=[]
 sending=False
 consuming=False
 threads=[]
+msgs_tosend=[]
 
 #helper function
 def ii_helper(fily, sel):
@@ -80,7 +81,7 @@ class App:
        
         vcmd = (frame.register(self.callbackE))
         w = tkinter.Entry(frame, validate='all', validatecommand=(vcmd, '%P')) 
-        w.insert(0,"1")
+        w.insert(0,'1')
         w.pack(side = tkinter.TOP, anchor = tkinter.W)
  
         w7 = tkinter.Label(frame, text="Outgoing rate [/s]:")
@@ -126,7 +127,7 @@ class App:
         self.check2 = tkinter.Checkbutton(frame, text="PoH", variable=self.varC2)
         self.check2.pack()
 
-        w8 = tkinter.Label(frame, text="Client Name: "+client_ID)
+        w8 = tkinter.Label(frame, text="Client Name: "+client_uid)
         w8.pack(side = tkinter.TOP, anchor = tkinter.W)
        
         vcmd2 = (frame.register(self.callbackE2))
@@ -178,10 +179,10 @@ class App:
     def callbackE(self, P):
         if str.isdigit(P):
             #print ("msg " + str(P))
-            self.speed = P 
+            self.speed = float(P)/10
             return True
-        elif P == "":
-            self.speed="10"
+        elif P == '':
+            self.speed='10'
             return True
         else:
             return False
@@ -199,7 +200,7 @@ class App:
 
                                
 root = tkinter.Tk()
-root.title("AnuuTech Client Stress Test")
+root.title("AnuuTech Client Stress Test v0.1.0beta")
 
 def randomstring(stringLength):
     letters = string.ascii_letters
@@ -231,12 +232,12 @@ def keepconnection():
             parameters=pika.ConnectionParameters(IP_sel, port,virtual_host, credentials, heartbeat=61)
             connection = pika.BlockingConnection(parameters)
             channel=connection.channel()
-            channel.queue_declare(queue=client_ID, auto_delete=True)
-            channel.queue_bind(exchange='L3_main_exchange', queue=client_ID, routing_key='all',
-                               arguments={'x-match': 'any', 'dest_uid': client_ID, 'dest_all': 'clients'})
+            channel.queue_declare(queue=client_uid, auto_delete=True)
+            channel.queue_bind(exchange='L3_main_exchange', queue=client_uid, routing_key='all',
+                               arguments={'x-match': 'any', 'dest_uid': client_uid, 'dest_all': 'clients'})
 
-            channel.basic_qos(prefetch_count=100)           
-            channel.basic_consume(queue=client_ID, on_message_callback=msgconsumer)
+            channel.basic_qos(prefetch_count=10)           
+            channel.basic_consume(queue=client_uid, on_message_callback=msgconsumer)
             tempstr="Connected to " + IP_sel
             mlist.insert(0,tempstr)
             channel.start_consuming()
@@ -286,35 +287,40 @@ def msgconsumer(ch, method, properties, body):
     global i2, timest_in, timest_i2, old_speed2
     hdrs=properties.headers
     #msg=str(body,'utf-8') only works in Python 3
-    msg= json.loads(body.decode("utf-8"))
-    #print(msg)
-    if app.varC1.get() and hdrs.get('type')=='CHAT':
+    msg= json.loads(body.decode('utf-8'))
+    
+    if app.varC1.get() and msg.get('type')=='CHAT':
         i2 += 1
-        print("CHAT "+msg['uid']+" Received " + msg['content'])
-    if hdrs.get('type')=='POH_L3_R1_DONE' and hdrs['dest_uid']==client_ID:
-        i2 += 1
-        print("PoH "+msg['uid']+" Received "+msg['content'])
+        print("CHAT "+msg['uid']+" Received " + msg['content']['chat_msg'])
+    elif (msg.get('type')=='POH_L3_R1_DONE' and hdrs.get('dest_uid')==client_uid):
+        print("POH back" + msg['uid'])
+        #send to a second node
+        headers=initheaders()
+        headers['service']='poh'
+        headers['dest_uid']='L3Node_I4xn9A'
+        msg['type']='POH_L3_R2'
+        msgs_tosend.append([headers, msg])
     # Receiving speed calculation
     time_st_now=time.time()
     if (time_st_now >= timest_in + 0.1):
         cur_speed = (i2-timest_i2)/(time_st_now-timest_in)
         disp_speed = 0.3*cur_speed+0.7*old_speed2
-        label_IR.set(str(int(disp_speed)))
+        label_IR.set(str(disp_speed))
         old_speed2=disp_speed
         timest_i2=i2
         timest_in=time_st_now     
     ch.basic_ack(delivery_tag = method.delivery_tag)
     
 def sending_msg():
-    global connection, channel2, connection2, sending
+    global connection, channel2, connection2, sending, IP_sel
     global i, timest_out, timest_i, cur_timeout, old_speed
     # get node uid from DB
     db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
     db_client = pymongo.MongoClient(db_url)
-    at_db = db_client["AnuuTechDB"]
-    nodes_col = at_db["nodes"]
-    db_query = { "IP_address": IP_sel}
-    db_filter = {"uid":1, "_id":0}
+    at_db = db_client['AnuuTechDB']
+    nodes_col = at_db['nodes']
+    db_query = { 'IP_address': IP_sel}
+    db_filter = {'uid':1, '_id':0}
     nodeuid=list(nodes_col.find_one(db_query, db_filter).values())[0]
     sending=True
     mlist.insert(0,"Start sending Msg.")
@@ -324,34 +330,50 @@ def sending_msg():
     channel2 = connection2.channel()
     msg=initmsg()
     headers=initheaders()
+    tx=str('msg from ' + client_uid)
+    ik=0
     while sending:
         try:
             isent=0
-            #headers={'service': 'chat', 'dest_all': 'clients', 'type': 'CHAT', 'sender_uid': client_ID}
+            #headers={'service': 'chat', 'dest_all': 'clients', 'type': 'CHAT', 'sender_uid': client_uid}
             if app.varC1.get():
-                msg['uid']= str(i)
                 headers['service']= 'chat'
                 headers['dest_all']= 'clients'
-                headers['type']= 'CHAT'
-                headers['dest_IP']=''#otherwise it will be sent back by other chat nodes IP_sel
-                headers['dest_uid']=client_ID
-                msg['content']="msg from " + client_ID
+                msg['uid']= str(i)
+                msg['type']= 'CHAT'
+                msg['content']={'chat_msg': tx}
                 channel2.basic_publish(exchange='L3_main_exchange', routing_key='all',
                                        properties=pika.BasicProperties(headers=headers),body=(json.dumps(msg)))
-                print("msg sent: CHAT " + msg['content'] + " "+ msg['uid'])
+                print("msg sent: CHAT " + msg['content']['chat_msg'] + " "+ msg['uid'])
                 isent += 1
             elif app.varC2.get():
                 msg['uid']= str(i)
                 headers['service']= 'poh'
-                headers['type']= 'POH_L3_R1'
-                headers['dest_IP']=IP_sel
+                msg['type']= 'POH_L3_R1'
                 headers['dest_uid']= nodeuid
                 headers['sender_node_IP']=IP_sel
-                msg['content']="hash msg from " + client_ID
+                if 1 ==1:
+                    msg['content']['tx_hash']='14c836ecd2dbcbd02c702f4fc4c19b8f5525e7fe93b77cd3723a08012d1eb589'
+                    msg['content']['timestamp']=time.time()
+                    #msg['content']['signer_nodeL3']='L3Node_gRKXrd'
+                    #msg['content']['fingerprintL3']='5ee8048b54eb8025d86beeefcf58ca0c90867ad2205e102f90b47631e42a4683aeaaf54af155c5b541ada681961d808ea4416a13beb71b7fe8fc757faf9f778ee00a875ae88bc4ee30b81a07a08f59e7e05daf778529f63609b92b4e6887b35766d23a7dfb5e3b0f0573563b7f83ec7e7d06e30665c2871ee4ab12736b3a0098'
+                else:
+                    msg['content']['tx_hash']='fb831a4dda50b99d9d848cdbf386a1aefc2196fca4644b7b02ee4387873caac7'
+                    msg['content']['timestamp']=1654192886.5420983
+                    msg['content']['signer_nodeL3']='L3Node_I4xn9A'
+                    msg['content']['fingerprintL3']='133996ca6b6f0ff538d9fe77489016565039eaa4df329153a127df8af34298406bf4e1d328d0562bdc47fffae1a57bcd1a61cb1d1f79000cc0c35febaa020b05631d10e99ad2864f0ab7d5b05d8b76c048669d06b39ea6c000eb0c66b2222a13baf698ed5f780268aa23848d17f34718b361d63c821c5c8bc3be70853794140b'
                 channel2.basic_publish(exchange='L3_main_exchange', routing_key='all',
                                        properties=pika.BasicProperties(headers=headers), body=(json.dumps(msg)))
-                print("msg sent: PoH " + msg['content'] + " "+ msg['uid'])
+                print("msg sent: PoH " + msg['uid'])
                 isent += 1
+                ik += 1
+                while len(msgs_tosend)>0:
+                    headers2, msg2=msgs_tosend.pop()
+                    channel2.basic_publish(exchange='L3_main_exchange', routing_key='all',
+                                           properties=pika.BasicProperties(headers=headers2), body=(json.dumps(msg2)))
+                    print("msg sent: PoH--2 " + msg2['uid'])
+                    #isent += 1
+                
             if isent>0:
                 # Real sending speed calculation
                 if ( i%1 == 0):
@@ -359,18 +381,18 @@ def sending_msg():
                     if (time_st_now >= timest_out + 0.1):
                         cur_speed = (i-timest_i)/(time_st_now-timest_out)
                         disp_speed = 0.3*cur_speed+0.7*old_speed
-                        label_OR.set(str(int(disp_speed)))
+                        label_OR.set(str(disp_speed))
                         old_speed = disp_speed
-                        if (int(app.speed) != 0):
-                            if(cur_speed > 1.1*int(app.speed)):
-                                cur_timeout=min(max(cur_timeout*1.09,1),1000)
-                            if(cur_speed < 0.9*int(app.speed)):
-                                cur_timeout=min(max(cur_timeout*0.91,1),1000)               
+                        if (app.speed != 0):
+                            if(cur_speed > 1.1*app.speed):
+                                cur_timeout=min(max(cur_timeout*1.09,1),10000)
+                            if(cur_speed < 0.9*app.speed):
+                                cur_timeout=min(max(cur_timeout*0.91,1),10000)               
                         timest_i=i
                         timest_out=time_st_now
                 i += isent
                 if (int(app.speed) != 1974):
-                    time.sleep(int(cur_timeout)/1000)
+                    time.sleep(cur_timeout/1000)
             else:
                 connection2.sleep(0.1) # ensure heartbeat
         except:
@@ -389,24 +411,21 @@ def sending_msg():
 
 def initmsg():
     msg_empty = {
-    "uid": '0',
-    "username": "StressTest",
-    "content": "some client data",
-    "content_hash": "used for PoH",
-    "pubk":"empty"
-    }
+        'uid': '0',
+        'content': {},
+        'type': '',
+        'timestamp':time.time()
+        }
     return msg_empty
 
 def initheaders():
     basic_headers = {
-        'sender_uid': client_ID,
+        'sender_uid': client_uid,
         'sender_node_IP': '',
         'dest_uid': '',
         'dest_IP': '',
         'dest_all': '',
         'service': '',
-        'type': '',
-        'hop': 0,
         'retry': 0
         }
     return basic_headers
@@ -438,9 +457,9 @@ def cleanall():
         print("Disconnected!")
 
 #MAIN CALL
-#CLIENT ID
-client_ID=str('client_'+randomstring(4))
-#print(client_ID)
+#CLIENT uid
+client_uid=str('client_'+randomstring(4))
+#print(client_uid)
 lay_pass=ii_helper('node_data/access.bin', '1')
 app=App(root)
 label_IR.set("NaN")

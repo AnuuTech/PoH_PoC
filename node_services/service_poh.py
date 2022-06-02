@@ -323,9 +323,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
             with open(self.POH_STAT_PATH, 'w') as pst_file:
                 pst_file.write(json.dumps(self._poh_stats))
 
-
-
-        self._stat_updateDB()        
+            self._stat_updateDB()        
         return
 
 
@@ -351,7 +349,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
         # check all txs with nodes public keys
         txs_valid=[]
         for tx in txs_pend:
-            if divmod(tx['timestamp']-self.ET,60)[0] < epoch: # tx of current epoch are not taken into account yet
+            if isinstance(tx['timestamp'], float) and divmod(tx['timestamp']-self.ET,60)[0] < epoch: # tx of current epoch are not taken into account yet
                 if (self._signature_verif(tx['tx_hash'], tx['timestamp'], tx['fingerprintL3'], tx['signer_nodeL3']) and
                     self._signature_verif(tx['tx_hash'], tx['fingerprintL3'], tx['fingerprintL2'], tx['signer_nodeL2']) and
                     self._signature_verif(tx['tx_hash'], tx['fingerprintL2'], tx['fingerprintL1'], tx['signer_nodeL1'])):
@@ -465,10 +463,10 @@ class ServiceRunning(ReconnectingNodeConsumer):
         self.LOGGER.debug("Finalizing! " + str([len(self._txs_to_delete), self._own_last_hash]))
         # Check that our list of txs is the one of the winning block
         if len(self._txs_to_delete)>0 and self._own_last_hash == self._poh_blocks[-1][1]:
-            db_queries=[]
+            del_list=[]
             for tx in self._txs_to_delete:
-                db_queries.append({ 'uid': tx['uid']})
-            self._delete_dataDB('transactions_pending', db_queries) #, 'localhost') TODO force to use localhost?
+                del_list.append(tx['uid'])
+            self._delete_dataDB('transactions_pending', del_list) #, 'localhost') TODO force to use localhost?
             self.LOGGER.info("Node has deleted the pending txs")
 
             #Add block into DB

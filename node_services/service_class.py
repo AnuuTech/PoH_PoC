@@ -565,7 +565,7 @@ class ReconnectingNodeConsumer(object):
         self.LOGGER.info("Starting sending_msg")
         
         while self._sending:
-            if len(self._msgs_to_send)>0:
+            if len(self._msgs_to_send)>0: #TODO implement groups per dest_uid!!!! 
                 msg, hdrs, IP, level =self._msgs_to_send.pop(0)
                 msgdisp=msg.copy()
                 msgdisp['content']='NOT DISPLAYED'
@@ -667,7 +667,7 @@ class ReconnectingNodeConsumer(object):
 
 
     # Generic method to get infos from AnuuTechDB
-    def _delete_dataDB(self, collects, db_queries):
+    def _delete_dataDB(self, collects, del_list):
         try:
             IP_sel=self._get_DBnodeIP()
             if len(IP_sel)<7:
@@ -678,8 +678,7 @@ class ReconnectingNodeConsumer(object):
             with pymongo.MongoClient(db_url) as db_client:
                 at_db = db_client['AnuuTechDB']
                 res_col = at_db[collects]
-                for dq in db_queries:
-                    res_col.delete_one(dq) 
+                res_col.delete_many({'uid':{ '$in': del_list}})
         except:    
             e = sys.exc_info()[1]
             self.LOGGER.error('Impossible to delete data from DB!!  %s' %str(e))
