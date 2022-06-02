@@ -155,7 +155,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 #service_str='services.'+self._service
                 #db_query = { 'level': nodelevel, service_str:0} query for only one service type
                 db_query = { 'level': nodelevel}
-                db_filter = {'IP_address':1, 'uid':1, '_id':0, 'services':1, 'last_view':1, 'pubkey':1}
+                db_filter = {'IP_address':1, 'uid':1, '_id':0, 'services':1, 'last_view':1}
                 nodeslist=list(nodes_col.find(db_query, db_filter))
                 # check if some nodes are not responding anymore (at node level)
                 if nodelevel == self._nodelevel:

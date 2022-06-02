@@ -22,6 +22,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
     _txs_to_delete=[]
     _own_last_hash=''
     _last_epoch=0
+    _nodespubkeys=[]
 
 
     def _initnode(self):
@@ -32,12 +33,11 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 self._poh_blocks=json.load(b_file)
         else:
             # Genesis block
-            height=1
-            b_hash='120157110_AnnuTech_is_born_74312d646576'
+            height=0
+            b_hash='145120157110_AnnuTech_is_born_74312d646576'
             epoch=1653948000-self.ET # =0 
             # Create second block
-            hh=SHA256.new(str(height+1).encode())#put new height
-            hh.update(b_hash.encode()) #put previous block hash
+            hh=SHA256.new(b_hash.encode())#put previous block hash
             hh.update(str(epoch).encode()) #put current epoch
             b_hash2=binascii.hexlify(hh.digest()).decode()
             self._poh_blocks=[[height, b_hash, epoch],
@@ -55,10 +55,10 @@ class ServiceRunning(ReconnectingNodeConsumer):
                                                hdrs.get('dest_IP') == self._own_IP)):
             tt=time.time()
             #Create fingerprint
-            fingerprint = self._do_signature(msg['content']['tx'], msg['content']['tx_hash'], tt)
+            fingerprint = self._do_signature(msg['content']['tx_hash'], tt)
 
             # Prepare query in good format
-            db_query = { 'uid': msg['uid'], 'tx': msg['content']['tx'], 'tx_hash': msg['content']['tx_hash'],
+            db_query = { 'uid': msg['uid'], 'tx_hash': msg['content']['tx_hash'],
                          'timestamp': tt, 'signer_nodeL3': self._uid, 'fingerprintL3': fingerprint }
             # Insert Tx on DB
             self._updateDB('transactions', db_query, None)
@@ -71,7 +71,6 @@ class ServiceRunning(ReconnectingNodeConsumer):
             msgback['uid']=msg['uid'] #keeps the same id, uid is the one set on DB for this tx
             msgback['type']='POH_L3_R1_DONE'
             msgback['content']['timestamp']=tt
-            msgback['content']['tx']=msg['content']['tx']
             msgback['content']['tx_hash']=msg['content']['tx_hash']
             msgback['content']['fingerprintL3']=fingerprint
             msgback['content']['signer_nodeL3']=self._uid
@@ -82,10 +81,10 @@ class ServiceRunning(ReconnectingNodeConsumer):
                                                 hdrs.get('dest_IP') == self._own_IP)):
             # SECOND L3 NODE
             # first L3 node signature check
-            if self._signature_verif(msg['content']['tx'], msg['content']['tx_hash'], msg['content']['timestamp'],
+            if self._signature_verif(msg['content']['tx_hash'], msg['content']['timestamp'],
                                      msg['content']['fingerprintL3'], msg['content']['signer_nodeL3']):
                 # Create temp fingerprint     
-                fingerprint_L3L2 = self._do_signature(msg['content']['tx'], msg['content']['tx_hash'], msg['content']['timestamp'])
+                fingerprint_L3L2 = self._do_signature(msg['content']['tx_hash'], msg['content']['fingerprintL3'])
                 # Select L2 node based on hash (sum of all characters), restricted to nodes with poh service
                 nodes_ps=[]
                 for n in self._nodeslist_lower:
@@ -113,10 +112,10 @@ class ServiceRunning(ReconnectingNodeConsumer):
                                                 hdrs.get('dest_IP') == self._own_IP)):
             # First L2 NODE
             # Second L3 node signature check
-            if self._signature_verif(msg['content']['tx'], msg['content']['tx_hash'], msg['content']['timestamp'],
+            if self._signature_verif(msg['content']['tx_hash'], msg['content']['fingerprintL3'],
                                      msg['content']['fingerprint_L3L2'], msg['content']['signer_node_L3L2']):
                 # sign the hash TODO first check if tx is eligible ???  
-                fingerprint2 = self._do_signature(msg['content']['tx'], msg['content']['tx_hash'], msg['content']['timestamp'])
+                fingerprint2 = self._do_signature(msg['content']['tx_hash'], msg['content']['fingerprintL3'])
                 # Select L2 node based on hash (sum of all characters), restricted to nodes with poh service
                 nodes_ps=[]
                 for n in self._nodeslist:
@@ -144,10 +143,10 @@ class ServiceRunning(ReconnectingNodeConsumer):
                                                 hdrs.get('dest_IP') == self._own_IP)):
             # SECOND L2 NODE
             # first L2 node signature check
-            if self._signature_verif(msg['content']['tx'], msg['content']['tx_hash'], msg['content']['timestamp'],
+            if self._signature_verif(msg['content']['tx_hash'], msg['content']['fingerprintL3'],
                                      msg['content']['fingerprintL2'], msg['content']['signer_nodeL2']):
                 # Create temp fingerprint     
-                fingerprint_L2L1 = self._do_signature(msg['content']['tx'], msg['content']['tx_hash'], msg['content']['timestamp'])
+                fingerprint_L2L1 = self._do_signature(msg['content']['tx_hash'], msg['content']['fingerprintL2'])
                 # Select L1 node based on hash (sum of all characters), restricted to nodes with poh service
                 nodes_ps=[]
                 for n in self._nodeslist_lower:
@@ -175,10 +174,10 @@ class ServiceRunning(ReconnectingNodeConsumer):
                                                 hdrs.get('dest_IP') == self._own_IP)):
             # First L1 NODE
             # Second L2 node signature check
-            if self._signature_verif(msg['content']['tx'], msg['content']['tx_hash'], msg['content']['timestamp'],
+            if self._signature_verif(msg['content']['tx_hash'], msg['content']['fingerprintL2'],
                                      msg['content']['fingerprint_L2L1'], msg['content']['signer_node_L2L1']):
                 # sign the hash       
-                fingerprint3 = self._do_signature(msg['content']['tx'], msg['content']['tx_hash'], msg['content']['timestamp'])
+                fingerprint3 = self._do_signature(msg['content']['tx_hash'], msg['content']['fingerprintL2'])
                 # Select L2 node based on hash (sum of all characters), restricted to nodes with poh service
                 nodes_ps=[]
                 for n in self._nodeslist:
@@ -206,10 +205,10 @@ class ServiceRunning(ReconnectingNodeConsumer):
                                                 hdrs.get('dest_IP') == self._own_IP)):
             # Second L1 NODE
             # First L1 node signature check
-            if self._signature_verif(msg['content']['tx'], msg['content']['tx_hash'], msg['content']['timestamp'],
+            if self._signature_verif(msg['content']['tx_hash'], msg['content']['fingerprintL2'],
                                      msg['content']['fingerprintL1'], msg['content']['signer_nodeL1']):
                 # Prepare query in good format
-                db_query = { 'uid': msg['uid'], 'tx': msg['content']['tx'], 'tx_hash': msg['content']['tx_hash'], 'timestamp': msg['content']['timestamp'],
+                db_query = { 'uid': msg['uid'], 'tx_hash': msg['content']['tx_hash'], 'timestamp': msg['content']['timestamp'],
                              'signer_nodeL3': msg['content']['signer_nodeL3'], 'fingerprintL3': msg['content']['fingerprintL3'],
                              'signer_nodeL2': msg['content']['signer_nodeL2'], 'fingerprintL2': msg['content']['fingerprintL2'],
                              'signer_nodeL1': msg['content']['signer_nodeL1'], 'fingerprintL1': msg['content']['fingerprintL1']}
@@ -241,16 +240,16 @@ class ServiceRunning(ReconnectingNodeConsumer):
             self._poh_stats[hdrs['sender_uid']]=1
         return True
 
-    def _signature_verif(self, tx, tx_hash, timestamp, fingerprint, node_uid):
+    def _signature_verif(self, tx_hash, input2, fingerprint, node_uid):
         try:
             nodepubkey=None
-            # get pubkey from nodeslist
-            for n in self._nodeslist:
+            # get pubkey from nodespubkeys list
+            for n in self._nodespubkeys:
                 if 'uid' in n:
                     if n['uid'] == node_uid:
-                        if 'pubkey' in n['uid']:
+                        if 'pubkey' in n:
                             nodepubkey=RSA.importKey(n.get('pubkey').encode())
-                            self.LOGGER.debug(str(node_uid)+" corresponding pubkey found "+str(n.get('pubkey')))
+                            self.LOGGER.debug(str(node_uid)+" corresponding pubkey found!")
 
             # if no pubkey found, try to get pubkey from DB # TODO get all net storage available nodes
             if nodepubkey is None:
@@ -264,17 +263,16 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
             if nodepubkey is not None:
                 #Verify fingerprint
-                hh=SHA256.new(tx.encode())
-                hh.update(tx_hash.encode())
-                hh.update(str(timestamp).encode())
+                hh=SHA256.new(tx_hash.encode())
+                hh.update(str(input2).encode())
                 verifier = PKCS115_SigScheme(nodepubkey)
                 try:
                     verifier.verify(hh, binascii.unhexlify(fingerprint.encode()))
-                    self.LOGGER.info("Tx " + str(tx)+" has been validly signed by "
+                    self.LOGGER.info("Tx " + str(tx_hash)+" has been validly signed by "
                                 +str(node_uid))
                     return True
                 except:
-                    self.LOGGER.info("Tx " + str(tx)+" has NOT BEEN VALIDLY signed by "
+                    self.LOGGER.info("Tx " + str(tx_hash)+" has NOT BEEN VALIDLY signed by "
                                 +str(node_uid))
                     return False
             else:
@@ -286,11 +284,10 @@ class ServiceRunning(ReconnectingNodeConsumer):
             return False
 
 
-    def _do_signature(self, tx, tx_hash, timestamp):
+    def _do_signature(self, tx_hash, input2):
         #Create fingerprint
-        hh=SHA256.new(tx.encode())
-        hh.update(tx_hash.encode())
-        hh.update(str(timestamp).encode())
+        hh=SHA256.new(tx_hash.encode())
+        hh.update(str(input2).encode())
         signer = PKCS115_SigScheme(self._PRIVKEY)
         return binascii.hexlify(signer.sign(hh)).decode()
 
@@ -300,25 +297,33 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
         if self._nodelevel == 'L1':
             self.LOGGER.debug("Current Epoch: "+str(divmod(time.time()-self.ET,60)[0]) + " and last block's epoch: "+str(self._poh_blocks[-1][2]))
-            if divmod(time.time()-self.ET,60)[1] > 0 and divmod(time.time()-self.ET,60)[1] < 20: # <20 seconds after epoch starts
+            if divmod(time.time()-self.ET,60)[1] > 10 and divmod(time.time()-self.ET,60)[1] <= 25: # between 10 to 25 seconds after epoch starts to let time for txs to all reached L1
                 # a new epoch just started, compute new block
                 self._compute_new_block()
                 # update blocks on DB
                 self._blocks_updateDB()
-            elif divmod(time.time()-self.ET,60)[1] > 45: # >45 seconds after epoch starts
+            elif divmod(time.time()-self.ET,60)[1] >= 45: # >45 seconds after epoch starts
                 # epoch is finishing, finalize and clean pending txs
                 self._finalizing()
-            else:
-                # check the blocks (between >20 and <45 seconds after new epoch)
-                self._check_blocks()            
+            elif divmod(time.time()-self.ET,60)[1] > 25 and divmod(time.time()-self.ET,60)[1] < 45:
+                # check the blocks (between >25 and <45 seconds after new epoch)
+                self._check_blocks()
 
-        #save the blocks
-        with open(self.POH_BLOCKS_PATH, 'w') as b_file:
-            b_file.write(json.dumps(self._poh_blocks))
-            
-        #write poh stats to file
-        with open(self.POH_STAT_PATH, 'w') as pst_file:
-            pst_file.write(json.dumps(self._poh_stats))
+        if divmod(time.time()-self.ET,60)[1]>0 and divmod(time.time()-self.ET,60)[1] <= 10: #every minute
+            #get all pubkeys to speedup validation process
+            db_query = {}
+            db_filter = {'uid':1, '_id':0, 'pubkey':1}
+            self._nodespubkeys=self._getDB_data('nodes', db_query, db_filter)
+
+            #save the blocks
+            with open(self.POH_BLOCKS_PATH, 'w') as b_file:
+                b_file.write(json.dumps(self._poh_blocks))
+                
+            #write poh stats to file
+            with open(self.POH_STAT_PATH, 'w') as pst_file:
+                pst_file.write(json.dumps(self._poh_stats))
+
+
 
         self._stat_updateDB()        
         return
@@ -347,21 +352,20 @@ class ServiceRunning(ReconnectingNodeConsumer):
         txs_valid=[]
         for tx in txs_pend:
             if divmod(tx['timestamp']-self.ET,60)[0] < epoch: # tx of current epoch are not taken into account yet
-                if (self._signature_verif(tx['tx'], tx['tx_hash'], tx['timestamp'], tx['fingerprintL3'], tx['signer_nodeL3']) and
-                    self._signature_verif(tx['tx'], tx['tx_hash'], tx['timestamp'], tx['fingerprintL2'], tx['signer_nodeL2']) and
-                    self._signature_verif(tx['tx'], tx['tx_hash'], tx['timestamp'], tx['fingerprintL1'], tx['signer_nodeL1'])):
+                if (self._signature_verif(tx['tx_hash'], tx['timestamp'], tx['fingerprintL3'], tx['signer_nodeL3']) and
+                    self._signature_verif(tx['tx_hash'], tx['fingerprintL3'], tx['fingerprintL2'], tx['signer_nodeL2']) and
+                    self._signature_verif(tx['tx_hash'], tx['fingerprintL2'], tx['fingerprintL1'], tx['signer_nodeL1'])):
                     txs_valid.append(tx)
         self.LOGGER.info(str(len(txs_valid))+" txs have been validated.")
         
         # create new block hash
         if len(txs_valid)>0:
             new_height=self._poh_blocks[-1][0]+1 #previous height+1
-            hh=SHA256.new(str(new_height).encode())# put new height
-            hh.update(self._poh_blocks[-1][1].encode()) # put previous block hash
+            hh=SHA256.new(self._poh_blocks[-1][1].encode())# put previous block hash
             hh.update(str(epoch).encode()) # put epoch
 
             for tx in txs_valid:
-                hh.update(tx['tx_hash'].encode())#put each tx hash
+                hh.update(tx['fingerprintL1'].encode())#put each tx L1 fingerprint
 
             b_hash=binascii.hexlify(hh.digest()).decode()#compute final hash
 

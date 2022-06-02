@@ -462,8 +462,8 @@ def msgconsumer(ch, method, properties, body):
             if tx_sent[msg['uid']]['hash'] == msg['content']['tx_hash']:
                 tx_sent[msg['uid']]['verified'] = 1
                 own_msg=True
-                LOGGER.info("PoH R1 Received " + str(msg['content']['tx']))
-                mlist.insert(0,"PoH R1 received back: "+str(msg['content']['tx']))
+                LOGGER.info("PoH R1 Received " + str(msg['uid']))
+                mlist.insert(0,"PoH R1 received back: "+str(msg['uid']))
         if not own_msg:
             LOGGER.info("PoH R1 Received IS NOT OUR OWN MSG!")
             mlist.insert(0,"PoH R1 Received IS NOT OUR OWN MSG!")
@@ -490,8 +490,7 @@ def msgconsumer(ch, method, properties, body):
                 else:
                     nodepubkey=RSA.importKey(y.get('pubkey').encode())
                     #Verify fingerprint
-                    hh=SHA256.new(x.get('tx').encode())
-                    hh.update(x.get('tx_hash').encode())
+                    hh=SHA256.new(x.get('tx_hash').encode())
                     hh.update(str(x.get('timestamp')).encode())
                     verifier = PKCS115_SigScheme(nodepubkey)
                     try:
@@ -601,7 +600,6 @@ def prepare_msg():
             msgtype=3
             # Hash message
             msg['content']={}
-            msg['content']['tx']=chat_msg
             msg['content']['tx_hash']=binascii.hexlify((SHA256.new(chat_msg.encode())).digest()).decode()
             # Select L3 node based on hash (sum of all characters), restricted to nodes with poh service
             if len(nodeslist_poh) != 0:
