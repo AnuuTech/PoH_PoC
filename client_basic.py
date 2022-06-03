@@ -348,8 +348,11 @@ def conn():
     if not connected:
         t2 = threading.Thread(target=keepconnection)  
         t2.start()
+
+        t3= threading.Thread(target=readDB)
+        t3.start()
         mlist.insert(0,"Connecting...")
-        
+
 def disconn():
     global connected
     connected=False
@@ -363,7 +366,35 @@ def openFile():
         )
     pathh.delete(0,'end')
     pathh.insert(0, tf)
- 
+
+def readDB():
+    global connected, tx_sent
+    db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+defaultL3nodes[0]+':27017/?authMechanism=DEFAULT&authSource=admin'
+    with pymongo.MongoClient(db_url) as db_client:
+        at_db = db_client['AnuuTechDB']
+        while connected:
+            LOGGER.debug("DB checking "+str(len(tx_sent)))
+            if (int(varGr.get()) == 3):
+                col = at_db['transactions_pending']
+                #tx_sent[msg['uid']]={'hash': msg['content']['tx_hash'], 'verified':0}
+                for txid in tx_sent.keys():
+                    db_query = { 'uid': txid }
+                    if (col.count_documents(db_query)>0) and tx_sent[txid]['verified']==0:
+                        tx_sent[txid]['verified']=1
+                        mlist.insert(0,"Msg "+str(txid)+ " has been validated by 3 nodes of the network...")
+                        LOGGER.info("Msg "+str(txid)+ " has been validated by 3 nodes of the network...")
+                col = at_db['blocks']
+                resl=col.find_one(sort=[("height", -1)])
+                tx_s=tx_sent.copy()
+                for txid in tx_s.keys():
+                    t=[el for el in resl['transactions'] if el['uid']==txid]
+                    if len(t)>0:
+                        mlist.insert(0,"Msg "+str(txid)+ " is now fully validated and added to the masterhash blockchain!")
+                        LOGGER.info("Msg "+str(txid)+ " is now fully validated and added to the masterhash blockchain!")
+                        tx_sent.pop(txid)
+            time.sleep(2)
+
+    
 def keepconnection():
     global connected, connection, channel, IP_sel
     # Start connection keep loop
@@ -460,7 +491,6 @@ def msgconsumer(ch, method, properties, body):
         own_msg= False
         if msg['uid'] in tx_sent.keys():
             if tx_sent[msg['uid']]['hash'] == msg['content']['tx_hash']:
-                tx_sent[msg['uid']]['verified'] = 1
                 own_msg=True
                 LOGGER.info("PoH R1 Received back: " + str(msg['uid']))
                 mlist.insert(0,"PoH R1 received back: "+str(msg['uid']))
