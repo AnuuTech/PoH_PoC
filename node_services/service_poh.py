@@ -214,7 +214,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
                              'signer_nodeL1': msg['content']['signer_nodeL1'], 'fingerprintL1': msg['content']['fingerprintL1']}
                 # Insert Tx on DB
                 self._updateDB('transactions_pending', db_query, None)
-                self.LOGGER.info("Tx sent to pending Txs on DB" +str(db_query))
+                self.LOGGER.info("Tx sent to pending Txs on DB" +str(msg['uid']))
             else:
                 self.LOGGER.warning("POH saving in DB cancelled!")
 
@@ -249,7 +249,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
                     if n['uid'] == node_uid:
                         if 'pubkey' in n:
                             nodepubkey=RSA.importKey(n.get('pubkey').encode())
-                            self.LOGGER.debug(str(node_uid)+" corresponding pubkey found!")
+                            #self.LOGGER.debug(str(node_uid)+" corresponding pubkey found!")
 
             # if no pubkey found, try to get pubkey from DB # TODO get all net storage available nodes
             if nodepubkey is None:
@@ -300,8 +300,6 @@ class ServiceRunning(ReconnectingNodeConsumer):
             if divmod(time.time()-self.ET,60)[1] > 10 and divmod(time.time()-self.ET,60)[1] <= 25: # between 10 to 25 seconds after epoch starts to let time for txs to all reached L1
                 # a new epoch just started, compute new block
                 self._compute_new_block()
-                # update blocks on DB
-                self._blocks_updateDB()
             elif divmod(time.time()-self.ET,60)[1] >= 45: # >45 seconds after epoch starts
                 # epoch is finishing, finalize and clean pending txs
                 self._finalizing()
@@ -323,6 +321,8 @@ class ServiceRunning(ReconnectingNodeConsumer):
             with open(self.POH_STAT_PATH, 'w') as pst_file:
                 pst_file.write(json.dumps(self._poh_stats))
 
+            # save the blocks on DB and update stat of dB
+            self._blocks_updateDB()
             self._stat_updateDB()        
         return
 
@@ -370,6 +370,9 @@ class ServiceRunning(ReconnectingNodeConsumer):
             # Add new block!
             self._poh_blocks.append([new_height, b_hash, epoch])
             self.LOGGER.info("A new block has been added! " + str([new_height, b_hash, epoch]))
+
+            # update blocks on DB
+            self._blocks_updateDB()
 
             # store info for later txs deletion
             self._txs_to_delete=txs_valid
@@ -438,6 +441,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
             self._poh_blocks[-2][1]=chains[max_occ_chains[0]][2] # previous hash
             self._poh_blocks[-1][0]=chains[max_occ_chains[0]][0] # current height
             self.LOGGER.info("Switching to highest chain: " + str(chains[max_occ_chains[0]]))
+            self._blocks_updateDB()
         elif max_occ > nb_chains/2: # there is a dominating chain and we are not on it:
             # Switch chain TODO privilege LONGEST chain if several existing? (already switching to HIGHEST)
             self._poh_blocks[-1][1]=max_occ_chains[0] # current hash

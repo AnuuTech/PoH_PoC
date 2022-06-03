@@ -526,6 +526,7 @@ class ReconnectingNodeConsumer(object):
             self.LOGGER.info("Received decode: " + str(msgdisp))
             hdrs=properties.headers
             self.LOGGER.debug(hdrs)
+            time.sleep(0.01)
             return (self._msg_process(msg, hdrs))
         except:
             e = sys.exc_info()[1]
@@ -565,36 +566,88 @@ class ReconnectingNodeConsumer(object):
         self.LOGGER.info("Starting sending_msg")
         
         while self._sending:
-            if len(self._msgs_to_send)>0: #TODO implement groups per dest_uid!!!! 
-                msg, hdrs, IP, level =self._msgs_to_send.pop(0)
-                msgdisp=msg.copy()
-                msgdisp['content']='NOT DISPLAYED'
-                self.LOGGER.debug(str(msgdisp))
-                self.LOGGER.debug(str(hdrs))
-                # Define credentials and exchange name according to level
-                nuser = str(level+'ext_node')
-                np = self.ii_helper('node_data/access.bin', 4+int(level[1]))
-                send_ex = str(level+'_main_exchange')
-                # Call the sender method
-                send_credentials = pika.PlainCredentials(nuser, np)
-                self._sender(msg, hdrs, send_credentials, IP, send_ex, level)
+            tempall=[]
+            if len(self._msgs_to_send)>0:
+                # create a local copy of all msgs to send
+                for i in range(0, len(self._msgs_to_send)):
+                    tempall.append(self._msgs_to_send.pop(0)) #msg, hdrs, IP, level
+                
+                while len(tempall)>0: # regroup by same IP/level
+                    msghdrs=[]
+                    tIP=tempall[0][2]
+                    tlev=tempall[0][3]
+
+                    # add [msg, hdrs] with same IP and same level
+                    msghdrs=[(el[0], el[1]) for el in tempall if (el[2]==tIP and el[3]==tlev)]
+
+                    # remove elements already taken
+                    tempall=[el for el in tempall if not (el[2]==tIP and el[3]==tlev)]
+
+                    # Define credentials and exchange name according to level
+                    nuser = str(tlev+'ext_node')
+                    np = self.ii_helper('node_data/access.bin', 4+int(tlev[1]))
+                    send_ex = str(tlev+'_main_exchange')
+                    
+                    # Call the sender method for the batch of msgs to send
+                    send_credentials = pika.PlainCredentials(nuser, np)
+                    self.LOGGER.debug("Sending batch of :" +str(len(msghdrs))+" msgs, to IP: "+str(tIP))
+                    self._sender(msghdrs, send_credentials, tIP, send_ex, tlev)
+                    
             else:
                 time.sleep(0.01) # prevent loop CPU usage
 
 
     # Sender method
     # TODO ensure delivery! https://github.com/pika/pika/blob/master/examples/confirmation.py
-    def _sender(self, msg, hdrs, send_credentials, IP, send_ex, level):
+    def _sender(self, msghdrs, send_credentials, IP, send_ex, level):
         # creation of sending connection:
         try:
             parameters = pika.ConnectionParameters(IP, self.PORT, self.VHOST, send_credentials,
                                                    heartbeat=6)
             sendingconn = pika.BlockingConnection(parameters)
             sendingchan = sendingconn.channel()
-            sendingchan.basic_publish(exchange=send_ex, routing_key='all',
-                                      properties=pika.BasicProperties(headers=hdrs),
-                                      body=(json.dumps(msg)))
-            self.LOGGER.info(str("msg sent: " + msg.get('type')))
+            for el in msghdrs:
+                try:
+                    sendingchan.basic_publish(exchange=send_ex, routing_key='all',
+                                          properties=pika.BasicProperties(headers=el[1]),
+                                          body=(json.dumps(el[0])))
+                    self.LOGGER.info(str("msg sent: " + el[0].get('type')))
+                except:
+                    e = sys.exc_info()[1]
+                    # check number of retries
+                    if el[1]['retry']>2:
+                        logmsg=str("ERROR: msg "+el[0]['uid']+ " impossible to send error when create sending connection with 3 retries! %s" %str(e))
+                        self.LOGGER.error(logmsg)
+                    # retry with a random new node
+                    else: 
+                        logmsg=str("ERROR: msg "+el[0]['uid']+ " impossible to create connection! will retry... %s" %str(e))
+                        self.LOGGER.error(logmsg)
+                        el[1]['retry']=el[1]['retry']+1
+                        # Get a node with same service
+                        nodes_s=[]
+                        if level == self._nodelevel:
+                            #nodes_s=[n for n in self._nodeslist if (n['services'][hdrs['service']] == 1)] Replaced by iteration loop to avoid errors
+                            for n in self._nodeslist:
+                                if 'services' in n:
+                                    if el[1]['service'] in n['services']:
+                                        if (n['services'][el[1]['service']] == 1):
+                                            nodes_s.append(n)
+                        elif self._nodelevel != 'L1':
+                            #nodes_s=[n for n in self._nodeslist_lower if (n['services'][hdrs['service']] == 1)]
+                            for n in self._nodeslist_lower:
+                                if 'services' in n:
+                                    if el[1]['service'] in n['services']:
+                                        if (n['services'][el[1]['service']] == 1):
+                                            nodes_s.append(n)
+                            
+                        random.shuffle(nodes_s)
+                        if len(nodes_s) < 2:
+                            self.LOGGER.error("No other node with service "+el[1]['service']+" is available, impossible to process msg "+el[0]['uid'])
+                        else:
+                            IP=nodes_s[0]['IP_address']
+                            self.LOGGER.info("Msg "+el[0]['uid']+" retrying with "+el[1]['service']+" on IP: "+nodes_s[0]['IP_address'])
+                            self._msgs_to_send.append([el[0], el[1], IP, level ])
+                
             sendingconn.close()
         except:
             try:
@@ -602,44 +655,45 @@ class ReconnectingNodeConsumer(object):
             except:
                 pass
             e = sys.exc_info()[1]
-            # Try to handle the error
+            # Try to handle the global error
             try:
-                # check number of retries
-                if hdrs['retry']>2:
-                    logmsg=str("ERROR: msg "+msg['uid']+ " impossible to send error when create sending connection with 3 retries! %s" %str(e))
-                    self.LOGGER.error(logmsg)
-                # retry with a random new node
-                else: 
-                    logmsg=str("ERROR: msg "+msg['uid']+ " impossible to create connection! will retry... %s" %str(e))
-                    self.LOGGER.error(logmsg)
-                    hdrs['retry']=hdrs['retry']+1
-                    # Get a node with same service
-                    nodes_s=[]
-                    if level == self._nodelevel:
-                        #nodes_s=[n for n in self._nodeslist if (n['services'][hdrs['service']] == 1)] Replaced by iteration loop to avoid errors
-                        for n in self._nodeslist:
-                            if 'services' in n:
-                                if hdrs['service'] in n['services']:
-                                    if (n['services'][hdrs['service']] == 1):
-                                        nodes_s.append(n)
-                    elif self._nodelevel != 'L1':
-                        #nodes_s=[n for n in self._nodeslist_lower if (n['services'][hdrs['service']] == 1)]
-                        for n in self._nodeslist_lower:
-                            if 'services' in n:
-                                if hdrs['service'] in n['services']:
-                                    if (n['services'][hdrs['service']] == 1):
-                                        nodes_s.append(n)
-                        
-                    random.shuffle(nodes_s)
-                    if len(nodes_s) < 2:
-                        self.LOGGER.error("No other node with service "+hdrs['service']+" is available, impossible to process msg "+msg['uid'])
-                    else:
-                        IP=nodes_s[0]['IP_address']
-                        self.LOGGER.info("Msg "+msg['uid']+" retrying with "+hdrs['service']+" on IP: "+nodes_s[0]['IP_address'])
-                        self._msgs_to_send.append([msg, hdrs, IP, level ])
+                for el in msghdrs:
+                    # check number of retries
+                    if el[1]['retry']>2:
+                        logmsg=str("ERROR: msg "+el[0]['uid']+ " impossible to send error when create sending connection with 3 retries! %s" %str(e))
+                        self.LOGGER.error(logmsg)
+                    # retry with a random new node
+                    else: 
+                        logmsg=str("ERROR: msg "+el[0]['uid']+ " impossible to create connection! will retry... %s" %str(e))
+                        self.LOGGER.error(logmsg)
+                        el[1]['retry']=el[1]['retry']+1
+                        # Get a node with same service
+                        nodes_s=[]
+                        if level == self._nodelevel:
+                            #nodes_s=[n for n in self._nodeslist if (n['services'][hdrs['service']] == 1)] Replaced by iteration loop to avoid errors
+                            for n in self._nodeslist:
+                                if 'services' in n:
+                                    if el[1]['service'] in n['services']:
+                                        if (n['services'][el[1]['service']] == 1):
+                                            nodes_s.append(n)
+                        elif self._nodelevel != 'L1':
+                            #nodes_s=[n for n in self._nodeslist_lower if (n['services'][hdrs['service']] == 1)]
+                            for n in self._nodeslist_lower:
+                                if 'services' in n:
+                                    if el[1]['service'] in n['services']:
+                                        if (n['services'][el[1]['service']] == 1):
+                                            nodes_s.append(n)
+                            
+                        random.shuffle(nodes_s)
+                        if len(nodes_s) < 2:
+                            self.LOGGER.error("No other node with service "+el[1]['service']+" is available, impossible to process msg "+el[0]['uid'])
+                        else:
+                            IP=nodes_s[0]['IP_address']
+                            self.LOGGER.info("Msg "+el[0]['uid']+" retrying with "+el[1]['service']+" on IP: "+nodes_s[0]['IP_address'])
+                            self._msgs_to_send.append([el[0], el[1], IP, level ])
             except:
                 e = sys.exc_info()[1]
-                self.LOGGER.critical('Impossible to send a message, message discarded! %s' %str(e))
+                self.LOGGER.critical('Impossible to send messages, messages will be discarded! %s' %str(e))
 
 
     def _get_DBnodeIP(self):
