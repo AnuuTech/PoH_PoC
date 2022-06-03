@@ -206,11 +206,8 @@ class ServiceRunning(ReconnectingNodeConsumer):
                                    'cpu_avg_usage_percent': (psutil.getloadavg()[0]/ psutil.cpu_count() * 100),
                                    'mem_total': psutil.virtual_memory()[0], 'mem_percent_used': psutil.virtual_memory()[2],
                                    'disk_total': psutil.disk_usage('/')[0], 'disk_percent_used': psutil.disk_usage('/')[3],
-                                   'IP_address': self._own_IP, 'SW_version': self.SW_VERSION}}
-        self._updateDB('nodes', db_query, db_values_toset)
-        # Additional update
-        db_values_toset2 = {'$set':{'services':self._nodeservices}}
-        self._updateDB('nodes', db_query, db_values_toset2)
+                                   'IP_address': self._own_IP, 'SW_version': self.SW_VERSION, 'services':self._nodeservices}}
+        self._updateDB('nodes', db_query, db_values_toset, False)
 
     def _exchange_check(self):
         # Ensure local exchange exists

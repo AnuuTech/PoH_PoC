@@ -8,6 +8,7 @@ from Crypto.Hash import SHA256
 from Crypto.PublicKey import RSA
 import binascii
 import time
+from threading import Timer
 from collections import Counter
 import pymongo
 import urllib
@@ -16,6 +17,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
     POH_STAT_PATH='node_data/poh_stat.file'
     POH_BLOCKS_PATH='node_data/blocks.file'
     NODE_TICK_INTERVAL=10 #overriding the one of service_class
+    UPDATEDB_TICK_INTERVAL=1
     ET=1653948000 # epoch trim (31.05.2022 in CET)
     _poh_stats={}
     _poh_blocks=[]
@@ -23,6 +25,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
     _own_last_hash=''
     _last_epoch=0
     _nodespubkeys=[]
+    _tx_queries_tosend=[]
 
 
     def _initnode(self):
@@ -47,6 +50,9 @@ class ServiceRunning(ReconnectingNodeConsumer):
         if os.path.isfile(self.POH_STAT_PATH):
             with open(self.POH_STAT_PATH, 'r') as pst_file:
                 self._poh_stats=json.load(pst_file)
+
+        # Start own ticking2 for DB Tx update
+        self._ticking2()
         self.LOGGER.info("INITALISATION poh service done")
  
     def _msg_process(self, msg, hdrs):
@@ -57,12 +63,13 @@ class ServiceRunning(ReconnectingNodeConsumer):
             #Create fingerprint
             fingerprint = self._do_signature(msg['content']['tx_hash'], tt)
 
+            # Tx in DB insertion commented out, was slowing down the network too much
             # Prepare query in good format
-            db_query = { 'uid': msg['uid'], 'tx_hash': msg['content']['tx_hash'],
-                         'timestamp': tt, 'signer_nodeL3': self._uid, 'fingerprintL3': fingerprint }
+            #db_query = { 'uid': msg['uid'], 'tx_hash': msg['content']['tx_hash'],
+            #             'timestamp': tt, 'signer_nodeL3': self._uid, 'fingerprintL3': fingerprint }
             # Insert Tx on DB
-            self._updateDB('transactions', db_query, None)
-            self.LOGGER.info("Tx sent to Txs for debug on DB" +str(db_query))
+            #self._updateDB('transactions', db_query, None, False)
+            #self.LOGGER.info("Tx sent to Txs for debug on DB" +str(db_query))
 
             # Sends back to client
             hdrs['dest_uid']=hdrs.get('sender_uid')
@@ -213,8 +220,8 @@ class ServiceRunning(ReconnectingNodeConsumer):
                              'signer_nodeL2': msg['content']['signer_nodeL2'], 'fingerprintL2': msg['content']['fingerprintL2'],
                              'signer_nodeL1': msg['content']['signer_nodeL1'], 'fingerprintL1': msg['content']['fingerprintL1']}
                 # Insert Tx on DB
-                self._updateDB('transactions_pending', db_query, None)
-                self.LOGGER.info("Tx sent to pending Txs on DB" +str(msg['uid']))
+                self._tx_queries_tosend.append(db_query)
+                self.LOGGER.info("Tx will be sent to pending Txs on DB" +str(msg['uid']))
             else:
                 self.LOGGER.warning("POH saving in DB cancelled!")
 
@@ -479,19 +486,37 @@ class ServiceRunning(ReconnectingNodeConsumer):
                                        'previous_hash': self._poh_blocks[-2][1],
                                        'epoch' : self._last_epoch,
                                        'transactions': self._txs_to_delete}}
-            self._updateDB('blocks', db_query, db_values_toset)
+            self._updateDB('blocks', db_query, db_values_toset, False)
 
         # Reset info for deletion in any case
         self._own_last_hash == ''
         self._txs_to_delete = []
         self._last_epoch=0
 
-        
+
+    def _ticking2(self):
+        self._ticking2_actions()
+        t = Timer(self.UPDATEDB_TICK_INTERVAL, self._ticking2)
+        t.daemon=True
+        t.start()
+
+
+    def _ticking2_actions(self):
+        if len(self._tx_queries_tosend)>0:
+            # create a local copy of all queries to send
+            tempall=[]
+            for i in range(0, len(self._tx_queries_tosend)):
+                tempall.append(self._tx_queries_tosend.pop(0))
+            self._updateDB('transactions_pending', tempall, None, True)
+            self.LOGGER.info("Batch of " + str(len(tempall)) + " db queries has been sent.")  
+        return
+
+
     def _blocks_updateDB(self):
         db_query = { 'uid': self._uid }
         db_values_toset = {'$set':{'blocks':{'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}}}
         # Write to DB
-        self._updateDB('nodes', db_query, db_values_toset)
+        self._updateDB('nodes', db_query, db_values_toset, False)
         self.LOGGER.debug("Node blocks updated on DB, blocks = " + str(db_values_toset))      
 
         
@@ -503,7 +528,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
         db_query = { 'uid': self._uid }
         db_values_toset = {'$set':{'service_poh':{'nb_of_msg_processed': tot}}}
         # Write to DB
-        self._updateDB('nodes', db_query, db_values_toset)
+        self._updateDB('nodes', db_query, db_values_toset, False)
         self.LOGGER.debug("Node stat updated on DB, stats = " + str(db_values_toset))
 
 #----------------------------------------------------------------

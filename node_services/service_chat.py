@@ -36,7 +36,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 msg['hop']=msg['hop']+1
             else:
                 willhop=False
-                self.LOGGER.info("CHAT msg "+msg['uid']+" is discarded by node, hop: "+msg['hop'])
+                self.LOGGER.info("CHAT msg "+msg['uid']+" is discarded by node, hop: "+str(msg['hop']))
                 
             if willhop:
                 # send to all nodes with chat service
@@ -89,7 +89,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
         db_query = { 'uid': self._uid }
         db_values_toset = {'$set':{'service_chat':{'nb_of_msg_processed': tot}}}
         # Write to DB
-        self._updateDB('nodes', db_query, db_values_toset)
+        self._updateDB('nodes', db_query, db_values_toset, False)
         self.LOGGER.debug("Node information updated on DB, IP = " + str(db_values_toset))
 
 #----------------------------------------------------------------

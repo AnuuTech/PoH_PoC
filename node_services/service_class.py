@@ -51,7 +51,7 @@ class NodeConsumer(object):
 
         # In production, experiment with higher prefetch values
         # for higher consumer throughput
-        self._prefetch_count = 1
+        self._prefetch_count = 10
 
     def connect(self):
         """This method connects to RabbitMQ, returning the connection handle.
@@ -526,7 +526,7 @@ class ReconnectingNodeConsumer(object):
             self.LOGGER.info("Received decode: " + str(msgdisp))
             hdrs=properties.headers
             self.LOGGER.debug(hdrs)
-            time.sleep(0.01)
+            time.sleep(0.01)# to let time for sending thread
             return (self._msg_process(msg, hdrs))
         except:
             e = sys.exc_info()[1]
@@ -762,7 +762,7 @@ class ReconnectingNodeConsumer(object):
 
 
     # Generic method to update infos on AnuuTechDB
-    def _updateDB(self, collects, db_query, db_values_toset ):
+    def _updateDB(self, collects, db_query, db_values_toset, manyflag ):
         try:
             IP_sel=self._get_DBnodeIP()
             if len(IP_sel)<7:
@@ -776,11 +776,14 @@ class ReconnectingNodeConsumer(object):
                 if db_values_toset is not None:
                     # Update/Insert values, using upsert = True
                     col.update_one(db_query, db_values_toset, True)
-                    self.LOGGER.debug(str(db_values_toset))
+                    #self.LOGGER.debug(str(db_values_toset))
+                elif manyflag:
+                    # use insert many command
+                    col.insert_many(db_query)
                 else:
-                    # use insert command
+                    # use insert one command
                     col.insert_one(db_query)
-                self.LOGGER.info("Values updated on DB, own IP = " + self._own_IP)
+                self.LOGGER.info("Values updated on DB, own IP = " + self._own_IP+ " on " +collects)
         except:    
             e = sys.exc_info()[1]
             self.LOGGER.error('Impossible to updateDB!!  %s' %str(e))

@@ -15,6 +15,7 @@ signal.signal(signal.SIGINT, signal.default_int_handler) # to ensure Signal to b
 lay_user='client_user'
 IPs=[] # IPs of all L3 nodes
 defaultL3nodes=[]
+nodeslist={} # UIDs and IPs of all nodes with chat service
 port=5672
 virtual_host='anuutech'
 IP_sel=[]
@@ -72,16 +73,17 @@ old_speed2 =1
 class App:
 
     def __init__(self, wind):
-        global varGr, mlist, label_IR, label_OR, IPs, IP_sel
+        global varGr, mlist, label_IR, label_OR, IPs, IP_sel,nodeslist
         frame = tkinter.Frame(wind)
-        IPs=defaultL3nodes
+        getL3nodesList()
+        IPs=list(nodeslist.values())
         
         w2 = tkinter.Label(frame, text="Outgoing rate goal [/s] (0 for max):")
         w2.pack(side = tkinter.TOP, anchor = tkinter.W)
        
         vcmd = (frame.register(self.callbackE))
         w = tkinter.Entry(frame, validate='all', validatecommand=(vcmd, '%P')) 
-        w.insert(0,'1')
+        w.insert(0, 1.0)
         w.pack(side = tkinter.TOP, anchor = tkinter.W)
  
         w7 = tkinter.Label(frame, text="Outgoing rate [/s]:")
@@ -177,15 +179,12 @@ class App:
         print(selection)     
 
     def callbackE(self, P):
-        if str.isdigit(P):
-            #print ("msg " + str(P))
-            self.speed = float(P)/10
+        try:
+            self.speed = float(P)
             return True
-        elif P == '':
-            self.speed='10'
+        except:
+            self.speed=1.0
             return True
-        else:
-            return False
 
     def callbackE2(self, P):
         if str.isdigit(P):
@@ -284,7 +283,7 @@ def stop_send():
     mlist.insert(0,"Sending stopped.")
 
 def msgconsumer(ch, method, properties, body):
-    global i2, timest_in, timest_i2, old_speed2
+    global i2, timest_in, timest_i2, old_speed2, nodeslist_poh
     hdrs=properties.headers
     #msg=str(body,'utf-8') only works in Python 3
     msg= json.loads(body.decode('utf-8'))
@@ -295,9 +294,10 @@ def msgconsumer(ch, method, properties, body):
     elif (msg.get('type')=='POH_L3_R1_DONE' and hdrs.get('dest_uid')==client_uid):
         print("POH back" + msg['uid'])
         #send to a second node
+        node_uid2=list(nodeslist_poh.keys())[(sum(msg['content']['fingerprintL3'].encode()))%len(nodeslist_poh.keys())]
         headers=initheaders()
         headers['service']='poh'
-        headers['dest_uid']='L3Node_I4xn9A'
+        headers['dest_uid']=node_uid2
         msg['type']='POH_L3_R2'
         msgs_tosend.append([headers, msg])
     # Receiving speed calculation
@@ -315,7 +315,7 @@ def sending_msg():
     global connection, channel2, connection2, sending, IP_sel
     global i, timest_out, timest_i, cur_timeout, old_speed
     # get node uid from DB
-    db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
+    db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+defaultL3nodes[0]+':27017/?authMechanism=DEFAULT&authSource=admin'
     db_client = pymongo.MongoClient(db_url)
     at_db = db_client['AnuuTechDB']
     nodes_col = at_db['nodes']
@@ -385,9 +385,9 @@ def sending_msg():
                         old_speed = disp_speed
                         if (app.speed != 0):
                             if(cur_speed > 1.1*app.speed):
-                                cur_timeout=min(max(cur_timeout*1.09,1),10000)
+                                cur_timeout=min(max(cur_timeout*1.09,1),1000)
                             if(cur_speed < 0.9*app.speed):
-                                cur_timeout=min(max(cur_timeout*0.91,1),10000)               
+                                cur_timeout=min(max(cur_timeout*0.91,1),1000)               
                         timest_i=i
                         timest_out=time_st_now
                 i += isent
@@ -408,6 +408,32 @@ def sending_msg():
     except:
         e = sys.exc_info()[1]
         print( "<p>Problem when closing sending connection: %s</p>" % e )
+
+def getL3nodesList():
+    global nodeslist, nodeslist_chat, nodeslist_poh, nodeslist_ds, defaultL3nodes
+    #print(defaultL3nodes)
+    timestamp_config=time.time()
+    waiting=False
+    while len(nodeslist)==0:
+        try:
+            random.shuffle(defaultL3nodes)
+            IP_sel=defaultL3nodes[0]
+            # get all infos from DB
+            db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
+            db_client = pymongo.MongoClient(db_url)
+            at_db = db_client['AnuuTechDB']
+            nodes_col = at_db['nodes']
+            db_query = { 'level': 'L3'}
+            db_filter = {'uid':1, 'IP_address':1, '_id':0, 'services':1}
+            templist=list(nodes_col.find(db_query, db_filter))
+            nodeslist={n['uid']:n['IP_address'] for n in templist }# if (n['services']['net_storage'] == 1}
+            nodeslist_chat={n['uid']:n['IP_address'] for n in templist if n['services']['chat'] == 1}
+            nodeslist_poh={n['uid']:n['IP_address'] for n in templist if n['services']['poh'] == 1}
+            nodeslist_ds={n['uid']:n['IP_address'] for n in templist if n['services']['net_maintenance'] == 1}
+        except:
+            time.sleep(1)
+            e = sys.exc_info()[1]
+            LOGGER.info( "<p>Error while trying to get nodes from DB, retrying...: %s</p>" % e )
 
 def initmsg():
     msg_empty = {

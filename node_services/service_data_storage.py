@@ -64,7 +64,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
             db_values_toset = {'$set':{self._uid: 'local', 'size' : size}}
 
             # Insert data hash on DB
-            self._updateDB('data_storage_files', db_query, db_values_toset)
+            self._updateDB('data_storage_files', db_query, db_values_toset, False)
             self.LOGGER.info("Hash sent to data storage files on DB" +str(db_query))
 
             if msg.get('type') == 'SAVE_DATA':
@@ -177,7 +177,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
         db_query = { 'uid': self._uid }
         db_values_toset = {'$set':{'service_data_storage':{'nb_of_msg_processed': tot}}}
         # Write to DB
-        self._updateDB('nodes', db_query, db_values_toset)
+        self._updateDB('nodes', db_query, db_values_toset, False)
         self.LOGGER.debug("Node information updated on DB, IP = " + str(db_values_toset))
 
 #----------------------------------------------------------------

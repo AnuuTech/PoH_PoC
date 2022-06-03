@@ -137,7 +137,7 @@ class App:
         frame = tkinter.Frame(wind)
         getL3nodesList()
         IPs=list(nodeslist.values())
-        print(nodeslist_poh)
+        #print(nodeslist_poh)
         frame.configure(bg='grey10')
 
         w0 = tkinter.Label(frame, text="UNIQUE ADDRESS:", fg='white', bg='grey10')
@@ -462,48 +462,48 @@ def msgconsumer(ch, method, properties, body):
             if tx_sent[msg['uid']]['hash'] == msg['content']['tx_hash']:
                 tx_sent[msg['uid']]['verified'] = 1
                 own_msg=True
-                LOGGER.info("PoH R1 Received " + str(msg['uid']))
+                LOGGER.info("PoH R1 Received back: " + str(msg['uid']))
                 mlist.insert(0,"PoH R1 received back: "+str(msg['uid']))
         if not own_msg:
             LOGGER.info("PoH R1 Received IS NOT OUR OWN MSG!")
             mlist.insert(0,"PoH R1 Received IS NOT OUR OWN MSG!")
-        else:
-            # OPTIONAL LOCAL CHECK
+        else: 
+            # OPTIONAL LOCAL CHECK Deactivated for now, "transactions" collections do not exist anymore
             # get all infos from DB
-            random.shuffle(defaultL3nodes)
-            IP_DB=defaultL3nodes[0] # TODO get all net storage available nodes
-            db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_DB+':27017/?authMechanism=DEFAULT&authSource=admin'
-            db_client = pymongo.MongoClient(db_url)
-            at_db = db_client['AnuuTechDB']
-            tx_col = at_db['transactions']
-            db_query = { 'uid': msg['uid'] }
-            x=tx_col.find_one(db_query)
-            if x is None:
-                LOGGER.info("PoH R1 " + str(msg['uid'])+" received back but no input in DB exists!")
-            else:
-                # get node signer public key
-                node_col=at_db['nodes']
-                db_query = { 'uid': x.get('signer_nodeL3') }
-                y=node_col.find_one(db_query)
-                if y is None:
-                    LOGGER.info("Node " + str(x.get('signer_nodeL3'))+" is not found in DB!")
-                else:
-                    nodepubkey=RSA.importKey(y.get('pubkey').encode())
-                    #Verify fingerprint
-                    hh=SHA256.new(x.get('tx_hash').encode())
-                    hh.update(str(x.get('timestamp')).encode())
-                    verifier = PKCS115_SigScheme(nodepubkey)
-                    try:
-                        verifier.verify(hh, binascii.unhexlify(x.get('fingerprintL3').encode()))
-                        LOGGER.info("Msg " + str(msg['uid'])+" has been validly signed by "
-                                    +str(x.get('signer_nodeL3')))
-                        mlist.insert(0,"Msg " + str(msg['uid'])+" has been validly signed by "
-                                    +str(x.get('signer_nodeL3')))
-                    except:
-                        LOGGER.info("Msg " + str(msg['uid'])+" has NOT BEEN VALIDLY signed by "
-                                    +str(x.get('signer_nodeL3')))
-                        mlist.insert(0,"Msg " + str(msg['uid'])+" has NOT BEEN VALIDLY signed by "
-                                    +str(x.get('signer_nodeL3')))
+##            random.shuffle(defaultL3nodes)
+##            IP_DB=defaultL3nodes[0] # TODO get all net storage available nodes
+##            db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_DB+':27017/?authMechanism=DEFAULT&authSource=admin'
+##            db_client = pymongo.MongoClient(db_url)
+##            at_db = db_client['AnuuTechDB']
+##            tx_col = at_db['transactions']
+##            db_query = { 'uid': msg['uid'] }
+##            x=tx_col.find_one(db_query)
+##            if x is None:
+##                LOGGER.info("PoH R1 " + str(msg['uid'])+" received back but no input in DB exists!")
+##            else:
+##                # get node signer public key
+##                node_col=at_db['nodes']
+##                db_query = { 'uid': x.get('signer_nodeL3') }
+##                y=node_col.find_one(db_query)
+##                if y is None:
+##                    LOGGER.info("Node " + str(x.get('signer_nodeL3'))+" is not found in DB!")
+##                else:
+##                    nodepubkey=RSA.importKey(y.get('pubkey').encode())
+##                    #Verify fingerprint
+##                    hh=SHA256.new(x.get('tx_hash').encode())
+##                    hh.update(str(x.get('timestamp')).encode())
+##                    verifier = PKCS115_SigScheme(nodepubkey)
+##                    try:
+##                        verifier.verify(hh, binascii.unhexlify(x.get('fingerprintL3').encode()))
+##                        LOGGER.info("Msg " + str(msg['uid'])+" has been validly signed by "
+##                                    +str(x.get('signer_nodeL3')))
+##                        mlist.insert(0,"Msg " + str(msg['uid'])+" has been validly signed by "
+##                                    +str(x.get('signer_nodeL3')))
+##                    except:
+##                        LOGGER.info("Msg " + str(msg['uid'])+" has NOT BEEN VALIDLY signed by "
+##                                    +str(x.get('signer_nodeL3')))
+##                        mlist.insert(0,"Msg " + str(msg['uid'])+" has NOT BEEN VALIDLY signed by "
+##                                    +str(x.get('signer_nodeL3')))
             #send to a second node
             # Select L3 node based on hash (sum of all characters), restricted to nodes with poh service
             if len(nodeslist_poh) != 0:
