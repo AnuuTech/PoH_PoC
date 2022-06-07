@@ -199,7 +199,7 @@ class App:
 
                                
 root = tkinter.Tk()
-root.title("AnuuTech Client Stress Test v0.1.0beta")
+root.title("AnuuTech Client Stress Test v0.1.0")
 
 def randomstring(stringLength):
     letters = string.ascii_letters

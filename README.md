@@ -1,20 +1,16 @@
 ## AnuuTech Proof-Of-Hash ##
-Initial network solution using RabbitMQ.
+Initial network solution using RabbitMQ as message protocol.
 
 
 ### CLIENT SIDE / TESTING THE NETWORK FEATURES
 You can test the different features of the network using the client_basic.py python application.
 1. Type "Python3 client_basic.py" in a command line where the file is present
-2. Wait until a list of nodes is collected from the network (up to 20 seconds)
-3. Select a node and the Chat message type, then click "Connect"
-4. Edit your name and the AnuuChat message to send and click "Send msg", it will send one message.
-5. Check that the message is correctly received back.
-6. Alternatively edit the AnuuChat recipient with the unique identifier of another client.
-7. Click "Send msg" and checks that recipient received the decrypted message.
-8. For PoH, select a node and click send msg. A message back should confirm the success of the operation.
+3. Select the message type you want to test, the node to connect to and then click "Connect"
+4. For the Chat feature, click "Send msg", to send a broadcast message
+6. Alternatively fill the AnuuChat recipient field with the unique identifier of another client to send an encrypted private message
+8. For PoH, click send msg and wait for a confirmation message
 9. For Data Storage, select a file to store in the network, click connect and then "Send msg"
-10. Check that the file has been successfully been stored, with the hash displayed below the "Select file" button.
-11. You can click on "Send msg" again, and the network will retrieve the file with the corresponding hash.
+10. To retrieve a file, fill in with a hash that has been stored and clicking "Send msg" will retrieve the file with the corresponding hash.
 12. Click "Disconnect" and then "QUIT"
 
 
@@ -35,12 +31,16 @@ You can stress test the network using the client_stresstest.py python applicatio
 ### SERVER SIDE / ADDING A NODE TO THE NETWORK
 To launch a node on a debian 10 or 11 machine:
 1. Copy the files from Github in the /home directory
-2. In /home directory, type "chmod +x installNode.sh" 
-3. Type "./installNode.sh LX" to launch the installation process and the automatic launch.
+2. In /home directory, type "chmod +x firstInstall.sh" 
+3. Type "./firstInstall.sh LX CHAT NET_SERV POH DATA_STOR" to launch the installation process and the automatic launch.
 
-LX should be L1, L2 or L3 depending on the network layer we want to join.
+LX should be L1, L2 or L3 depending on the network layer you want to join.
 
-You can check the python output log by typing "tail -f logs/output_SERVICENAME.log", CTRL-C will end the output reading.
+CHAT NET_SRV POH and DATA_STOR can be used to optionnally set which services the node will offer (1 to offer, 0 otherwise).
+
+For example, "./firstInstall.sh L3 1 0 0 0" will install a L3 node with only the chat service running.
+
+You can check the python output log by typing "tail -f logs/log_SERVICENAME.log", CTRL-C will end the output reading.
 
 You can check the rabbitmq output by typing "tail -f /var/log/rabbitmq/at-node\@--IPADDRESS--.log"
 

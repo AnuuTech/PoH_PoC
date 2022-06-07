@@ -502,8 +502,10 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
 
     def _ticking2_actions(self):
+        # only when not collecting new pending_txs (not activated for now)
+        #if len(self._tx_queries_tosend)>0 and (divmod(time.time()-self.ET,60)[1] < 5 or divmod(time.time()-self.ET,60)[1] > 30):
         if len(self._tx_queries_tosend)>0:
-            # create a local copy of all queries to send
+            # create a local copy of all tx queries to send
             tempall=[]
             for i in range(0, len(self._tx_queries_tosend)):
                 tempall.append(self._tx_queries_tosend.pop(0))

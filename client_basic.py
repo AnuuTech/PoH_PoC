@@ -23,7 +23,7 @@ import urllib
 import signal
 signal.signal(signal.SIGINT, signal.default_int_handler) # to ensure Signal to be received
 
-Title="AnuuTech Basic client V-0.1.0beta"
+Title="AnuuTech Basic client V-0.1.0"
 
 #helper function
 def ii_helper(fily, sel):
