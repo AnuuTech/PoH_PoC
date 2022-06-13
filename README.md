@@ -62,7 +62,8 @@ If issue is worse then stopping the service may be needed:
 - service rabbitmq-server start
 
 
+### USAGE EXAMPLES FOR DEVELOPERS
+A file with usage [examples](https://github.com/AnuuTech/PoH_PoC/blob/master/messages_examples.py) is provided.
+
 ### CHANGELOG
-The changelog is visible in [releases](https://github.com/AnuuTech/PoH_PoC/releases)
-
-
+The changelog is visible in [releases](https://github.com/AnuuTech/PoH_PoC/releases).
