@@ -8,23 +8,18 @@ from Crypto.Hash import SHA256
 from Crypto.PublicKey import RSA
 import binascii
 import time
-from threading import Timer
 from collections import Counter
-import pymongo
-import urllib
 
 class ServiceRunning(ReconnectingNodeConsumer):
-    POH_STAT_PATH='node_data/poh_stat.file'
     POH_BLOCKS_PATH='node_data/blocks.file'
-    NODE_TICK_INTERVAL=10 #overriding the one of service_class
-    UPDATEDB_TICK_INTERVAL=1
+    NODE_TICK_INTERVAL=5 #overriding the one of service_class
     ET=1653948000 # epoch trim (31.05.2022 in CET)
-    _poh_stats={}
     _poh_blocks=[]
-    _txs_to_delete=[]
+    _txs_received=[]
+    _txs_to_validate=[]
+    _txs_validated=[]
     _own_last_hash=''
     _last_epoch=0
-    _nodespubkeys=[]
     _tx_queries_tosend=[]
 
 
@@ -45,14 +40,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
             b_hash2=binascii.hexlify(hh.digest()).decode()
             self._poh_blocks=[[height, b_hash, epoch],
                               [height+1, b_hash2, epoch+1]]
-            
-        #PoH stat updated from file
-        if os.path.isfile(self.POH_STAT_PATH):
-            with open(self.POH_STAT_PATH, 'r') as pst_file:
-                self._poh_stats=json.load(pst_file)
 
-        # Start own ticking2 for DB Tx update
-        self._ticking2()
         self.LOGGER.info("INITALISATION poh service done")
  
     def _msg_process(self, msg, hdrs):
@@ -62,27 +50,35 @@ class ServiceRunning(ReconnectingNodeConsumer):
             tt=time.time()
             #Create fingerprint
             fingerprint = self._do_signature(msg['content']['tx_hash'], tt)
+            # Select second L3 node based on hash (sum of all characters), restricted to nodes with poh service
+            nodes_ps=[]
+            for nk in self._nodeslist_lower.keys():
+                if 'services' in self._nodeslist[nk]:
+                    if 'poh' in self._nodeslist[nk]['services']:
+                        if (self._nodeslist[nk]['services']['poh'] == 1):
+                            nodes_ps.append(self._nodeslist[nk])
+            if len(nodes_ps) != 0:
+                headers=self._initheaders()
+                headers['service']='poh'
+                sumfp=(sum(fingerprint.encode()))%len(nodes_ps)
+                headers['dest_uid']=nodes_ps[sumfp]['uid']
+                headers['dest_IP']=nodes_ps[sumfp]['IP_address']
+                msg['type']='POH_L3_R2'
+                msg['content']['timestamp']=tt
+                msg['content']['fingerprintL3']=fingerprint
+                msg['content']['signer_nodeL3']=self._uid
+                self.LOGGER.info("msg POH R2 prepared to be sent: "+str(headers))
+                self._msgs_to_send.append([msg, headers, headers['dest_IP'], 'L3'])
+                # Sends also back to client for information only!
+                headers['dest_uid']=hdrs.get('sender_uid')
+                headers['dest_IP']=hdrs.get('sender_node_IP')
+                msg['type']='POH_L3_R1_DONE'
+                self.LOGGER.info("POH R1 sending back to client, msg "+str(msgback['uid'])+" " +str(headers))
+                self._msgs_to_send.append([msg, headers, headers['dest_IP'], 'L3'])
+            else:
+                self.LOGGER.warning("Cannot send PoH R2 msg, no node with service active found!")
 
-            # Tx in DB insertion commented out, was slowing down the network too much
-            # Prepare query in good format
-            #db_query = { 'uid': msg['uid'], 'tx_hash': msg['content']['tx_hash'],
-            #             'timestamp': tt, 'signer_nodeL3': self._uid, 'fingerprintL3': fingerprint }
-            # Insert Tx on DB
-            #self._updateDB('transactions', db_query, None, False)
-            #self.LOGGER.info("Tx sent to Txs for debug on DB" +str(db_query))
-
-            # Sends back to client
-            hdrs['dest_uid']=hdrs.get('sender_uid')
-            hdrs['dest_IP']=hdrs.get('sender_node_IP')
-            msgback=self._initmsg()
-            msgback['uid']=msg['uid'] #keeps the same id, uid is the one set on DB for this tx
-            msgback['type']='POH_L3_R1_DONE'
-            msgback['content']['timestamp']=tt
-            msgback['content']['tx_hash']=msg['content']['tx_hash']
-            msgback['content']['fingerprintL3']=fingerprint
-            msgback['content']['signer_nodeL3']=self._uid
-            self.LOGGER.info("POH R1 will send back "+str(msgback['uid'])+" " +str(hdrs))
-            self._msgs_to_send.append([msgback, hdrs, hdrs['dest_IP'], 'L3'])
+            
 
         elif (msg.get('type')=='POH_L3_R2' and (hdrs.get('dest_uid') == self._uid or
                                                 hdrs.get('dest_IP') == self._own_IP)):
@@ -94,11 +90,11 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 fingerprint_L3L2 = self._do_signature(msg['content']['tx_hash'], msg['content']['fingerprintL3'])
                 # Select L2 node based on hash (sum of all characters), restricted to nodes with poh service
                 nodes_ps=[]
-                for n in self._nodeslist_lower:
-                    if 'services' in n:
-                        if 'poh' in n['services']:
-                            if (n['services']['poh'] == 1):
-                                nodes_ps.append(n)
+                for nk in self._nodeslist_lower.keys():
+                    if 'services' in self._nodeslist_lower[nk]:
+                        if 'poh' in self._nodeslist_lower[nk]['services']:
+                            if (self._nodeslist_lower[nk]['services']['poh'] == 1):
+                                nodes_ps.append(self._nodeslist_lower[nk])
                 if len(nodes_ps) != 0:
                     headers=self._initheaders()
                     headers['service']='poh'
@@ -125,11 +121,11 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 fingerprint2 = self._do_signature(msg['content']['tx_hash'], msg['content']['fingerprintL3'])
                 # Select L2 node based on hash (sum of all characters), restricted to nodes with poh service
                 nodes_ps=[]
-                for n in self._nodeslist:
-                    if 'services' in n:
-                        if 'poh' in n['services']:
-                            if (n['services']['poh'] == 1):
-                                nodes_ps.append(n)
+                for nk in self._nodeslist.keys():
+                    if 'services' in self._nodeslist[nk]:
+                        if 'poh' in self._nodeslist[nk]['services']:
+                            if (self._nodeslist[nk]['services']['poh'] == 1):
+                                nodes_ps.append(self._nodeslist[nk])
                 if len(nodes_ps) != 0:
                     headers=self._initheaders()
                     headers['service']='poh'
@@ -156,11 +152,11 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 fingerprint_L2L1 = self._do_signature(msg['content']['tx_hash'], msg['content']['fingerprintL2'])
                 # Select L1 node based on hash (sum of all characters), restricted to nodes with poh service
                 nodes_ps=[]
-                for n in self._nodeslist_lower:
-                    if 'services' in n:
-                        if 'poh' in n['services']:
-                            if (n['services']['poh'] == 1):
-                                nodes_ps.append(n)
+                for nk in self._nodeslist_lower.keys():
+                    if 'services' in self._nodeslist_lower[nk]:
+                        if 'poh' in self._nodeslist_lower[nk]['services']:
+                            if (self._nodeslist_lower[nk]['services']['poh'] == 1):
+                                nodes_ps.append(self._nodeslist_lower[nk])
                 if len(nodes_ps) != 0:
                     headers=self._initheaders()
                     headers['service']='poh'
@@ -187,11 +183,11 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 fingerprint3 = self._do_signature(msg['content']['tx_hash'], msg['content']['fingerprintL2'])
                 # Select L2 node based on hash (sum of all characters), restricted to nodes with poh service
                 nodes_ps=[]
-                for n in self._nodeslist:
-                    if 'services' in n:
-                        if 'poh' in n['services']:
-                            if (n['services']['poh'] == 1):
-                                nodes_ps.append(n)
+                for nk in self._nodeslist.keys():
+                    if 'services' in self._nodeslist[nk]:
+                        if 'poh' in self._nodeslist[nk]['services']:
+                            if (self._nodeslist[nk]['services']['poh'] == 1):
+                                nodes_ps.append(self._nodeslist[nk])
                 if len(nodes_ps) != 0:
                     headers=self._initheaders()
                     headers['service']='poh'
@@ -214,16 +210,16 @@ class ServiceRunning(ReconnectingNodeConsumer):
             # First L1 node signature check
             if self._signature_verif(msg['content']['tx_hash'], msg['content']['fingerprintL2'],
                                      msg['content']['fingerprintL1'], msg['content']['signer_nodeL1']):
-                # Prepare query in good format
-                db_query = { 'uid': msg['uid'], 'tx_hash': msg['content']['tx_hash'], 'timestamp': msg['content']['timestamp'],
+                # Save Tx in good format
+                tx_rec = { 'uid': msg['uid'], 'tx_hash': msg['content']['tx_hash'], 'timestamp': msg['content']['timestamp'],
                              'signer_nodeL3': msg['content']['signer_nodeL3'], 'fingerprintL3': msg['content']['fingerprintL3'],
                              'signer_nodeL2': msg['content']['signer_nodeL2'], 'fingerprintL2': msg['content']['fingerprintL2'],
                              'signer_nodeL1': msg['content']['signer_nodeL1'], 'fingerprintL1': msg['content']['fingerprintL1']}
-                # Insert Tx on DB
-                self._tx_queries_tosend.append(db_query)
-                self.LOGGER.info("Tx will be sent to pending Txs on DB" +str(msg['uid']))
+                # Store Tx in received list
+                self._txs_received.append(tx_rec)
+                self.LOGGER.info("Tx is stored in recevied txs: " +str(msg['uid']))
             else:
-                self.LOGGER.warning("POH saving in DB cancelled!")
+                self.LOGGER.warning("POH storing in Tx received cancelled!")
 
         # FORWARD PoH messages from client that are for another node
         elif msg.get('type')=='POH_L3_R1' or msg.get('type')=='POH_L3_R2':
@@ -231,43 +227,44 @@ class ServiceRunning(ReconnectingNodeConsumer):
             if len(hdrs['dest_IP'])>6:
                 IP_tosend=hdrs['dest_IP']
             else: # get from nodeslist
-                for n in self._nodeslist:
-                    if hdrs['dest_uid'] == n['uid'] and 'IP_address' in n:
-                        IP_tosend=n['IP_address']
+                for nk in self._nodeslist.keys():
+                    if hdrs['dest_uid'] == nk and 'IP_address' in self._nodeslist[nk]:
+                        IP_tosend=self._nodeslist[nk]['IP_address']
             if IP_tosend == '':
                 self.LOGGER.warning("Impossible to forward message to "+str(hdrs['dest_uid'])+". Msg " +str(msg.get('uid'))+ " will be lost!")
             else:
                 self.LOGGER.info("PoH message forwarded to " +str(IP_tosend))
                 self._msgs_to_send.append([msg, hdrs, IP_tosend, 'L3'])
-            
-        # Update poh stats
-        if str(hdrs['sender_uid']) in list(self._poh_stats.keys()):
-            self._poh_stats[hdrs['sender_uid']]=self._poh_stats[hdrs['sender_uid']]+1
-        else:
-            self._poh_stats[hdrs['sender_uid']]=1
+
+        # RECEIVING TXS collected by other L1 node
+        elif msg.get('type')=='POH_TXS':
+            if len(msg['content'])>0:
+                for each el in msg['content']:
+                    if 'tx_hash' in el: #quick verif that it's a tx
+                        self._txs_to_validate.append(el)
+            self.LOGGER.info("PoH TXS receiving " +str(len(msg['content'])-1) + " txs.")
+
+        # RECEIVING LATEST BLOCKS of other L1 node
+        elif msg.get('type')=='POH_LATEST_BLOCKS':
+            self._nodeslist[msg['content']['node_uid']]['blocks']=msg['content']['blocks']
+            self.LOGGER.info("PoH latest blocks received from node " +str(msg['content']['node_uid']))
+
         return True
 
     def _signature_verif(self, tx_hash, input2, fingerprint, node_uid):
         try:
             nodepubkey=None
-            # get pubkey from nodespubkeys list
-            for n in self._nodespubkeys:
-                if 'uid' in n:
-                    if n['uid'] == node_uid:
-                        if 'pubkey' in n:
-                            nodepubkey=RSA.importKey(n.get('pubkey').encode())
+            nodesalllist={}
+            nodesalllist.update(self._nodeslist)
+            nodesalllist.update(self._nodeslist_lower)
+            nodesalllist.update(self._nodeslist_upper)
+            # get pubkey from nodeslist
+            for nk in nodesalllist.keys():
+                if 'uid' in nodesalllist[nk]:
+                    if nodesalllist[nk]['uid'] == node_uid:
+                        if 'pubkey' in nodesalllist[nk]:
+                            nodepubkey=RSA.importKey(nodesalllist[nk]['pubkey'].encode())
                             #self.LOGGER.debug(str(node_uid)+" corresponding pubkey found!")
-
-            # if no pubkey found, try to get pubkey from DB # TODO get all net storage available nodes
-            if nodepubkey is None:
-                db_query = { 'uid': node_uid }
-                db_filter = {'_id':0}
-                res=self._getDB_data('nodes', db_query, db_filter) 
-                if len(res)==0:
-                    self.LOGGER.info("Node " + str(node_uid)+" is not found in DB!")
-                    return False
-                nodepubkey=RSA.importKey(res[0].get('pubkey').encode())
-
             if nodepubkey is not None:
                 #Verify fingerprint
                 hh=SHA256.new(tx_hash.encode())
@@ -304,54 +301,66 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
         if self._nodelevel == 'L1':
             self.LOGGER.debug("Current Epoch: "+str(divmod(time.time()-self.ET,60)[0]) + " and last block's epoch: "+str(self._poh_blocks[-1][2]))
-            if divmod(time.time()-self.ET,60)[1] > 10 and divmod(time.time()-self.ET,60)[1] <= 25: # between 10 to 25 seconds after epoch starts to let time for txs to all reached L1
-                # a new epoch just started, compute new block
+            time_in_epoch=divmod(time.time()-self.ET,60)[1]
+            if  time_in_epoch > 0 and time_in_epoch <= 10: # between 0 and 10 seconds after epoch start, share all received txs
+                self._share_all_pending_txs()
+            elif  time_in_epoch > 15 and time_in_epoch <= 25: # between 15 to 25 seconds after epoch start, to let time for txs to reach all L1
+                # a new epoch started, compute new block
                 self._compute_new_block()
-            elif divmod(time.time()-self.ET,60)[1] >= 45: # >45 seconds after epoch starts
+            elif time_in_epoch > 30 and time_in_epoch <= 50: # between >30 and <50 seconds after new epoch, to let time for blocks to reach all L1
+                # check the blocks vs others
+                self._check_blocks()
+            elif time_in_epoch > 50: # >50 seconds after epoch starts
                 # epoch is finishing, finalize and clean pending txs
                 self._finalizing()
-            elif divmod(time.time()-self.ET,60)[1] > 25 and divmod(time.time()-self.ET,60)[1] < 45:
-                # check the blocks (between >25 and <45 seconds after new epoch)
-                self._check_blocks()
 
-        if divmod(time.time()-self.ET,60)[1]>0 and divmod(time.time()-self.ET,60)[1] <= 10: #every minute
-            #get all pubkeys to speedup validation process
-            db_query = {}
-            db_filter = {'uid':1, '_id':0, 'pubkey':1}
-            self._nodespubkeys=self._getDB_data('nodes', db_query, db_filter)
-
-            #save the blocks
-            with open(self.POH_BLOCKS_PATH, 'w') as b_file:
-                b_file.write(json.dumps(self._poh_blocks))
-                
-            #write poh stats to file
-            with open(self.POH_STAT_PATH, 'w') as pst_file:
-                pst_file.write(json.dumps(self._poh_stats))
-
-            # save the blocks on DB and update stat of dB
-            self._blocks_updateDB()
-            self._stat_updateDB()        
+        if time_in_epoch>0 and time_in_epoch <= 10: #every minute 
+            if self._nodelevel == 'L1':
+                # share the latest blocks
+                self._share_latest_blocks() #TODO not sure it is useful (when no txs come?)
+                # save the blocks on disk
+                with open(self.POH_BLOCKS_PATH, 'w') as b_file:
+                    b_file.write(json.dumps(self._poh_blocks))       
         return
 
 
+    def _share_all_pending_txs(self):
+        # emptying the txs_received safely, in case new txs are currently received 
+        tempall=[]
+        for i in range(0, len(self._txs_received)):
+            tempall.append(self._txs_received.pop(0))
+        self._txs_to_validate.append(temp_all)
+        
+        # prepare the msg to be sent
+        headers=self._initheaders()
+        headers['service']='poh'
+        msg=self._initmsg()
+        msg['type']='POH_TXS'
+        msg['content']=temp_all
+
+        #send to all L1 nodes with PoH
+        j=0
+        for nk in self._nodeslist.keys():
+            if 'services' in self._nodeslist[nk]:
+                if 'poh' in self._nodeslist[nk]['services']:
+                    if (self._nodeslist[nk]['services']['poh'] == 1):
+                        if 'IP_address' in self._nodeslist[nk] and self._nodeslist[nk]['IP_address'] != self._own_IP:
+                            headers['dest_IP']=self._nodeslist[nk]['IP_address']
+                            self._msgs_to_send.append([msg, headers, self._nodeslist[nk]['IP_address'], 'L1'])
+                            j=j+1
+        self.LOGGER.info("POH txs shared with : "+str(j)+" L1 nodes.")
+          
+
     def _compute_new_block(self):
         # don't run if finalize has not been done
-        if len(self._txs_to_delete)>0:
+        if self._last_epoch>0:
             return
         # determine epoch
         epoch=divmod(time.time()-self.ET, 60)[0]
-        
-        # get all pending txs from DB
-        db_query = {}
-        db_filter = {'_id':0}
-        txres=self._getDB_data('transactions_pending', db_query, db_filter)
-        if len(txres) == 0:
-            self.LOGGER.warning("No txs have been found!")
-            return
-        self.LOGGER.info(str(len(txres))+" txs have been read from DB.")
 
         # order all txs by timestamps TODO check if txs have not already been included in a previous block?
-        txs_pend=sorted(txres, key=lambda t: t['timestamp'])
+        txs_pend=sorted(self._txs_to_validate, key=lambda t: t['timestamp'])
+        self._txs_to_validate=[]
 
         # check all txs with nodes public keys
         txs_valid=[]
@@ -377,30 +386,56 @@ class ServiceRunning(ReconnectingNodeConsumer):
             # Add new block!
             self._poh_blocks.append([new_height, b_hash, epoch])
             self.LOGGER.info("A new block has been added! " + str([new_height, b_hash, epoch]))
+            # also update own entry in nodeslist
+            self._nodeslist[self._uid]['blocks']={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
 
-            # update blocks on DB
-            self._blocks_updateDB()
+            # share latest blocks with all L1 nodes with PoH
+            self._share_latest_blocks()
 
             # store info for later txs deletion
-            self._txs_to_delete=txs_valid
+            self._txs_validated=txs_valid
             self._own_last_hash=b_hash
             self._last_epoch=epoch
 
+
+    def _share_latest_blocks(self):
+        # emptying the txs_received safely, in case new txs are currently received 
+        tempall=[]
+        for i in range(0, len(self._txs_received)):
+            tempall.append(self._txs_received.pop(0))
+        self._txs_to_validate.append(temp_all)
+        
+        # prepare the msg to be sent
+        headers=self._initheaders()
+        headers['service']='poh'
+        msg=self._initmsg()
+        msg['type']='POH_LATEST_BLOCKS'
+        msg['content']['node_uid']=self._uid
+        msg['content']['blocks']={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
+
+        #send to all L1 nodes with PoH
+        j=0
+        for nk in self._nodeslist.keys():
+            if 'services' in self._nodeslist[nk]:
+                if 'poh' in self._nodeslist[nk]['services']:
+                    if (self._nodeslist[nk]['services']['poh'] == 1):
+                        if 'IP_address' in self._nodeslist[nk] and self._nodeslist[nk]['IP_address'] != self._own_IP:
+                            headers['dest_IP']=self._nodeslist[nk]['IP_address']
+                            self._msgs_to_send.append([msg, headers, self._nodeslist[nk]['IP_address'], 'L1'])
+                            j=j+1
+        self.LOGGER.info("POH last blocks shared with : "+str(j)+" L1 nodes.")
+
         
     def _check_blocks(self):
-        # get latest blocks from DB
-        db_query = { 'level': 'L1'}
-        db_filter = {'IP_address':1, 'uid':1, '_id':0, 'blocks':1}
-        res=self._getDB_data('nodes', db_query, db_filter)
-        if len(res) == 0:
-            self.LOGGER.warning("No valid nodes have been found at L1 for checking blocks!")
-            return
+        # determine epoch
+        epoch=divmod(time.time()-self.ET, 60)[0]
+        
         blocks=[]
-        for n in res:
-            if 'blocks' in n:
-                if 'current' in n['blocks'] and 'previous' in n['blocks'] and 'height' in n['blocks']:
+        for nk in self._nodeslist.keys():
+            if 'blocks' in self._nodeslist[nk]:
+                if 'current' in self._nodeslist[nk]['blocks']and 'previous' in self._nodeslist[nk]['blocks'] and 'height' in self._nodeslist[nk]['blocks']:
                     blocks.append([n['blocks']['current'],n['blocks']['previous'], n['blocks']['height']])
-
+                    
         # sort by chains
         # get chains heights in a descending order
         chains={}# {current hash: [height occurence previous_hash]}
@@ -447,91 +482,64 @@ class ServiceRunning(ReconnectingNodeConsumer):
             self._poh_blocks[-1][1]=max_occ_chains[0] # current hash
             self._poh_blocks[-2][1]=chains[max_occ_chains[0]][2] # previous hash
             self._poh_blocks[-1][0]=chains[max_occ_chains[0]][0] # current height
+            self._poh_blocks[-1][2]=epoch # current epoch
+            self._nodeslist[self._uid]['blocks']={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
             self.LOGGER.info("Switching to highest chain: " + str(chains[max_occ_chains[0]]))
-            self._blocks_updateDB()
         elif max_occ > nb_chains/2: # there is a dominating chain and we are not on it:
             # Switch chain TODO privilege LONGEST chain if several existing? (already switching to HIGHEST)
             self._poh_blocks[-1][1]=max_occ_chains[0] # current hash
             self._poh_blocks[-2][1]=chains[max_occ_chains[0]][2] # previous hash
             self._poh_blocks[-1][0]=chains[max_occ_chains[0]][0] # current height
-            self.LOGGER.info("Switching to dominating chain: " + str(chains[max_occ_chains[0]]))
-            self._blocks_updateDB()            
+            self._poh_blocks[-1][2]=epoch # current epoch
+            self._nodeslist[self._uid]['blocks']={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
+            self.LOGGER.info("Switching to dominating chain: " + str(chains[max_occ_chains[0]]))         
         elif (time.time()-self.ET)/60 > self._poh_blocks[-1][2] + 1.5*self.NODE_TICK_INTERVAL: # all nodes should have had time to compute next block
             # Switch chain TODO privilege longest chain if several existing?
             self._poh_blocks[-1][1]=max_occ_chains[0]
             self._poh_blocks[-2][1]=chains[max_occ_chains[0]][2]
             self._poh_blocks[-1][0]=chains[max_occ_chains[0]][0]
+            self._poh_blocks[-1][2]=epoch # current epoch
+            self._nodeslist[self._uid]['blocks']={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
             self.LOGGER.info("Switching to better chain: " + str(chains[max_occ_chains[0]]))
-            self._blocks_updateDB()
         else:
             self.LOGGER.info("For now staying on current chain: " + str(self._poh_blocks[-1]))# for now stay on chain
 
 
     def _finalizing(self):
-        # Only do for node with local net storage service
-        #if 'net_storage' in self._nodeservices:
-         #DEACTIVATED FOR NOW   if self._nodeservices['net_storage'] == 1:
-        self.LOGGER.debug("Finalizing! " + str([len(self._txs_to_delete), self._own_last_hash]))
-        # Check that our list of txs is the one of the winning block
-        if len(self._txs_to_delete)>0 and self._own_last_hash == self._poh_blocks[-1][1]:
-            del_list=[]
-            for tx in self._txs_to_delete:
-                del_list.append(tx['uid'])
-            self._delete_dataDB('transactions_pending', del_list) #, 'localhost') TODO force to use localhost?
-            self.LOGGER.info("Node has deleted the pending txs")
-
-            #Add block into DB
-            db_query = { 'hash': self._poh_blocks[-1][1] }
-            db_values_toset = {'$set':{'height': self._poh_blocks[-1][0],
-                                       'previous_hash': self._poh_blocks[-2][1],
-                                       'epoch' : self._last_epoch,
-                                       'transactions': self._txs_to_delete}}
-            self._updateDB('blocks', db_query, db_values_toset, False)
+        self.LOGGER.debug("Finalizing! " + str([len(self._txs_validated), self._own_last_hash]))
+        # Check that our list of txs is the one of the winning block TODO if not winning block check which txs from txs_to_delete have not been added to blocks!
+        if len(self._txs_validated)>0 and self._own_last_hash == self._poh_blocks[-1][1]:
+            # prepare the msg to be sent
+            headers=self._initheaders()
+            headers['service']='net_storage'
+            msg=self._initmsg()
+            msg['type']='SAVE_BLOCK'
+            msg['content']={'height': self._poh_blocks[-1][0],
+                            'current_hash': self._poh_blocks[-1][1]
+                            'previous_hash': self._poh_blocks[-2][1],
+                            'epoch' : self._last_epoch,
+                            'transactions': self._txs_validated}
+            j=0
+            # Send to all L2 nodes with net_storage service
+            for nk in self._nodeslist_upper.keys():
+                if 'services' in self._nodeslist_upper[nk]:
+                    if 'net_storage' in self._nodeslist_upper[nk]['services']:
+                        if (self._nodeslist_upper[nk]['services']['net_storage'] == 1):
+                            if 'IP_address' in self._nodeslist_upper[nk]:
+                                headers['dest_uid']=nk
+                                headers['dest_IP']=self._nodeslist_upper[nk]['IP_address']
+                                self._msgs_to_send.append([msg, headers, headers['dest_IP'], 'L2'])
+                                j=j+1
+            if j>0:
+                self.LOGGER.info("Block has been saved in " +str(j)+" L2 nodes.")
+            else:
+                self.LOGGER.warning("No L2 node with net_storage service have been found!")
 
         # Reset info for deletion in any case
         self._own_last_hash == ''
-        self._txs_to_delete = []
-        self._last_epoch=0
+        self._txs_validated = [] #TODO only if winning block
+        self._last_epoch=0   
 
-
-    def _ticking2(self):
-        self._ticking2_actions()
-        t = Timer(self.UPDATEDB_TICK_INTERVAL, self._ticking2)
-        t.daemon=True
-        t.start()
-
-
-    def _ticking2_actions(self):
-        # only when not collecting new pending_txs (not activated for now)
-        #if len(self._tx_queries_tosend)>0 and (divmod(time.time()-self.ET,60)[1] < 5 or divmod(time.time()-self.ET,60)[1] > 30):
-        if len(self._tx_queries_tosend)>0:
-            # create a local copy of all tx queries to send
-            tempall=[]
-            for i in range(0, len(self._tx_queries_tosend)):
-                tempall.append(self._tx_queries_tosend.pop(0))
-            self._updateDB('transactions_pending', tempall, None, True)
-            self.LOGGER.info("Batch of " + str(len(tempall)) + " db queries has been sent.")  
-        return
-
-
-    def _blocks_updateDB(self):
-        db_query = { 'uid': self._uid }
-        db_values_toset = {'$set':{'blocks':{'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}}}
-        # Write to DB
-        self._updateDB('nodes', db_query, db_values_toset, False)
-        self.LOGGER.debug("Node blocks updated on DB, blocks = " + str(db_values_toset))      
-
-        
-    def _stat_updateDB(self):
-        # Determine total sum of messages processed
-        tot=0
-        for cc in self._poh_stats.keys():
-            tot=tot+self._poh_stats[cc]
-        db_query = { 'uid': self._uid }
-        db_values_toset = {'$set':{'service_poh':{'nb_of_msg_processed': tot}}}
-        # Write to DB
-        self._updateDB('nodes', db_query, db_values_toset, False)
-        self.LOGGER.debug("Node stat updated on DB, stats = " + str(db_values_toset))
 
 #----------------------------------------------------------------
 def main():

@@ -199,7 +199,7 @@ class App:
 
                                
 root = tkinter.Tk()
-root.title("AnuuTech Client Stress Test v0.1.0")
+root.title("AnuuTech Client Stress Test")
 
 def randomstring(stringLength):
     letters = string.ascii_letters
@@ -293,13 +293,13 @@ def msgconsumer(ch, method, properties, body):
         print("CHAT "+msg['uid']+" Received " + msg['content']['chat_msg'])
     elif (msg.get('type')=='POH_L3_R1_DONE' and hdrs.get('dest_uid')==client_uid):
         print("POH back" + msg['uid'])
-        #send to a second node
-        node_uid2=list(nodeslist_poh.keys())[(sum(msg['content']['fingerprintL3'].encode()))%len(nodeslist_poh.keys())]
-        headers=initheaders()
-        headers['service']='poh'
-        headers['dest_uid']=node_uid2
-        msg['type']='POH_L3_R2'
-        msgs_tosend.append([headers, msg])
+##        #send to a second node
+##        node_uid2=list(nodeslist_poh.keys())[(sum(msg['content']['fingerprintL3'].encode()))%len(nodeslist_poh.keys())]
+##        headers=initheaders()
+##        headers['service']='poh'
+##        headers['dest_uid']=node_uid2
+##        msg['type']='POH_L3_R2'
+##        msgs_tosend.append([headers, msg])
     # Receiving speed calculation
     time_st_now=time.time()
     if (time_st_now >= timest_in + 0.1):

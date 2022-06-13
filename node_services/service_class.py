@@ -12,8 +12,6 @@ import socket
 import json
 import string
 import random
-import pymongo
-import urllib
 from Crypto.PublicKey import RSA
 from threading import Timer, Thread
 from collections import Counter
@@ -307,7 +305,7 @@ class ReconnectingNodeConsumer(object):
     Consumer indicates that a reconnect is necessary.
     """
 
-    SW_VERSION='0.1.0'
+    SW_VERSION='0.2.0beta'
     VHOST='anuutech'
     REQ_TIMEOUT=5 #timeout for http requests
     NODE_TICK_INTERVAL=60.0
@@ -318,6 +316,7 @@ class ReconnectingNodeConsumer(object):
     IP_PATH=MAIN_PATH+'node_data/ip.file'
     NODESLIST_PATH=MAIN_PATH+'node_data/nodeslist.file'
     NODESLIST_LOWER_PATH=MAIN_PATH+'node_data/nodeslist_lower.file'
+    NODESLIST_UPPER_PATH=MAIN_PATH+'node_data/nodeslist_upper.file'
     UID_PATH=MAIN_PATH+'node_data/node_uid.file'
     PS_PATH=MAIN_PATH+'node_data/ps_loc.file'
     SERVICES_PATH='node_services/services.conf'
@@ -341,8 +340,9 @@ class ReconnectingNodeConsumer(object):
     def __init__(self, xargs,yargs):
         self._reconnect_delay = 0
         self._pikaconn_parameters = None
-        self._nodeslist=[]
-        self._nodeslist_lower=[]
+        self._nodeslist={}
+        self._nodeslist_lower={}
+        self._nodeslist_upper={}
         self._uid=''
         self._msgs_to_send = []
         self._first_init = True
@@ -353,6 +353,8 @@ class ReconnectingNodeConsumer(object):
         self._nodelevel = str(xargs)
         self._service = str(yargs)
         self._nodeservices ={}
+        self._service_stats_path='node_data/'+self._service+'_stat.file'
+        self._service_stats={}
         self._node_user='layer_local'
         self._np='pass_'
         self._db_pass=self.ii_helper('node_data/access.bin', '12')
@@ -468,6 +470,11 @@ class ReconnectingNodeConsumer(object):
             with open(self.NODESLIST_LOWER_PATH, 'r') as nodes_file:
                 self._nodeslist_lower=json.load(nodes_file) 
 
+        #upper nodelist read from file
+        if os.path.isfile(self.NODESLIST_UPPER_PATH):
+            with open(self.NODESLIST_UPPER_PATH, 'r') as nodes_file:
+                self._nodeslist_upper=json.load(nodes_file) 
+
         # Create service queue
         try:
             connection = pika.BlockingConnection(self._pikaconn_parameters)
@@ -486,10 +493,17 @@ class ReconnectingNodeConsumer(object):
             logmsg=str("Impossible to create the initial connection!".format(err))
             self.LOGGER.critical(logmsg)
 
+        # Service stats updated from file
+        if os.path.isfile(self._service_stats_path):
+            with open(self._service_stats_path, 'r') as stat_file:
+                self._service_stats=json.load(stat_file)
+
         logmsg=("INITIALISATION of "+self._uid+" done, IP: " + self._own_IP+
                 " number of layer nodes: "+str(len(self._nodeslist)))
         if self._nodelevel != 'L1':
                 logmsg=logmsg+" number of lower layer nodes: "+str(len(self._nodeslist_lower))
+        if self._nodelevel != 'L3':
+                logmsg=logmsg+" number of upper layer nodes: "+str(len(self._nodeslist_upper))
         self.LOGGER.info(logmsg)
 
     def _get_headers_arg(self):
@@ -515,7 +529,28 @@ class ReconnectingNodeConsumer(object):
         if os.path.isfile(self.NODESLIST_LOWER_PATH):
             with open(self.NODESLIST_LOWER_PATH, 'r') as nodes_file:
                 self._nodeslist_lower=json.load(nodes_file)
+
+        #upper nodelist read from file
+        if os.path.isfile(self.NODESLIST_UPPER_PATH):
+            with open(self.NODESLIST_UPPER_PATH, 'r') as nodes_file:
+                self._nodeslist_upper=json.load(nodes_file)
+
+        #update and save service stats
+        self._stats_update()
+            
         return
+
+    def _stats_update(self):
+        # Determine total sum of messages processed
+        tot=0
+        for st in self._service_stats.keys():
+            tot=tot+self._service_stats[st]
+        if self._uid in self._nodeslist:
+            self._nodeslist[self._uid][self._service]={'nb_of_msg_processed': tot}
+        #write service stats to file
+        with open(self._service_stats_path, 'w') as stat_file:
+            stat_file.write(json.dumps(self._service_stats))
+        self.LOGGER.debug("Stat information updated: "+str(tot))
 
     # Consumer method
     def _node_consumer(self, ch, method, properties, body):
@@ -527,6 +562,11 @@ class ReconnectingNodeConsumer(object):
             hdrs=properties.headers
             self.LOGGER.debug(hdrs)
             time.sleep(0.01)# to let time for sending thread
+            # Update data stats
+            if str(hdrs['sender_uid']) in list(self._service_stats.keys()):
+                self._service_stats[hdrs['sender_uid']]=self._service_stats[hdrs['sender_uid']]+1
+            else:
+                self._service_stats[hdrs['sender_uid']]=1
             return (self._msg_process(msg, hdrs))
         except:
             e = sys.exc_info()[1]
@@ -624,29 +664,19 @@ class ReconnectingNodeConsumer(object):
                         self.LOGGER.error(logmsg)
                         el[1]['retry']=el[1]['retry']+1
                         # Get a node with same service
-                        nodes_s=[]
+                        IP_sel=''
                         if level == self._nodelevel:
-                            #nodes_s=[n for n in self._nodeslist if (n['services'][hdrs['service']] == 1)] Replaced by iteration loop to avoid errors
-                            for n in self._nodeslist:
-                                if 'services' in n:
-                                    if el[1]['service'] in n['services']:
-                                        if (n['services'][el[1]['service']] == 1):
-                                            nodes_s.append(n)
-                        elif self._nodelevel != 'L1':
-                            #nodes_s=[n for n in self._nodeslist_lower if (n['services'][hdrs['service']] == 1)]
-                            for n in self._nodeslist_lower:
-                                if 'services' in n:
-                                    if el[1]['service'] in n['services']:
-                                        if (n['services'][el[1]['service']] == 1):
-                                            nodes_s.append(n)
-                            
-                        random.shuffle(nodes_s)
-                        if len(nodes_s) < 2:
+                            IP_sel=self._get_rand_nodeIP(el[1]['service'], self._nodeslist)
+                        elif int(level[1]) < int(self._nodelevel[1]) :
+                            IP_sel=self._get_rand_nodeIP(el[1]['service'], self._nodeslist_lower)
+                        else:
+                            IP_sel=self._get_rand_nodeIP(el[1]['service'], self._nodeslist_upper)                        
+
+                        if len(IP_sel) < 7:
                             self.LOGGER.error("No other node with service "+el[1]['service']+" is available, impossible to process msg "+el[0]['uid'])
                         else:
-                            IP=nodes_s[0]['IP_address']
-                            self.LOGGER.info("Msg "+el[0]['uid']+" retrying with "+el[1]['service']+" on IP: "+nodes_s[0]['IP_address'])
-                            self._msgs_to_send.append([el[0], el[1], IP, level ])
+                            self.LOGGER.info("Msg "+el[0]['uid']+" retrying with "+el[1]['service']+" on IP: "+IP_sel)
+                            self._msgs_to_send.append([el[0], el[1], IP_sel, level ])
                 
             sendingconn.close()
         except:
@@ -668,122 +698,63 @@ class ReconnectingNodeConsumer(object):
                         self.LOGGER.error(logmsg)
                         el[1]['retry']=el[1]['retry']+1
                         # Get a node with same service
-                        nodes_s=[]
+                        IP_sel=''
                         if level == self._nodelevel:
-                            #nodes_s=[n for n in self._nodeslist if (n['services'][hdrs['service']] == 1)] Replaced by iteration loop to avoid errors
-                            for n in self._nodeslist:
-                                if 'services' in n:
-                                    if el[1]['service'] in n['services']:
-                                        if (n['services'][el[1]['service']] == 1):
-                                            nodes_s.append(n)
-                        elif self._nodelevel != 'L1':
-                            #nodes_s=[n for n in self._nodeslist_lower if (n['services'][hdrs['service']] == 1)]
-                            for n in self._nodeslist_lower:
-                                if 'services' in n:
-                                    if el[1]['service'] in n['services']:
-                                        if (n['services'][el[1]['service']] == 1):
-                                            nodes_s.append(n)
-                            
-                        random.shuffle(nodes_s)
-                        if len(nodes_s) < 2:
+                            IP_sel=self._get_rand_nodeIP(el[1]['service'], self._nodeslist)
+                        elif int(level[1]) < int(self._nodelevel[1]) :
+                            IP_sel=self._get_rand_nodeIP(el[1]['service'], self._nodeslist_lower)
+                        else:
+                            IP_sel=self._get_rand_nodeIP(el[1]['service'], self._nodeslist_upper)                        
+
+                        if len(IP_sel) < 7:
                             self.LOGGER.error("No other node with service "+el[1]['service']+" is available, impossible to process msg "+el[0]['uid'])
                         else:
-                            IP=nodes_s[0]['IP_address']
-                            self.LOGGER.info("Msg "+el[0]['uid']+" retrying with "+el[1]['service']+" on IP: "+nodes_s[0]['IP_address'])
-                            self._msgs_to_send.append([el[0], el[1], IP, level ])
+                            self.LOGGER.info("Msg "+el[0]['uid']+" retrying with "+el[1]['service']+" on IP: "+IP_sel)
+                            self._msgs_to_send.append([el[0], el[1], IP_sel, level ])
+
             except:
                 e = sys.exc_info()[1]
                 self.LOGGER.critical('Impossible to send messages, messages will be discarded! %s' %str(e))
-
-
-    def _get_DBnodeIP(self):
-        # get all nodes with net storage service
-        #nodes_ns=[n for n in self._nodeslist if n['services']['net_storage'] == 1] Replaced by iteration loop to avoid errors
-        nodes_ns=[]
-        for n in self._nodeslist:
-            if 'services' in n:
-                if 'net_storage' in n['services']:
-                    if n['services']['net_storage'] == 1:
-                        nodes_ns.append(n)
-        if len(nodes_ns) == 0:
-            # check if we have the local service
-            if 'net_storage' in self._nodeservices:
-                 if self._nodeservices['net_storage'] == 1:
-                     return 'localhost'
-            self.LOGGER.warning("ERROR! No nodes with net_storage service at "+self._nodelevel+" are available!")
-            return ''
-        random.shuffle(nodes_ns)
-        IP_sel=''
-        for j in range(0, len(nodes_ns)):
-            if ('IP_address' in nodes_ns[j] and len(IP_sel)<7):
-                IP_sel=nodes_ns[j]['IP_address']
-        return IP_sel
-
-
-    # Generic method to get infos from AnuuTechDB
-    def _delete_dataDB(self, collects, del_list):
-        try:
-            IP_sel=self._get_DBnodeIP()
-            if len(IP_sel)<7:
-                self.LOGGER.warning("No node with valid IP have been found at "+self._nodelevel+"! Impossible to delete data from DB!")
-                return
-            # delete data from DB
-            db_url='mongodb://admin:' + urllib.parse.quote(self._db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
-            with pymongo.MongoClient(db_url) as db_client:
-                at_db = db_client['AnuuTechDB']
-                res_col = at_db[collects]
-                res_col.delete_many({'uid':{ '$in': del_list}})
-        except:    
-            e = sys.exc_info()[1]
-            self.LOGGER.error('Impossible to delete data from DB!!  %s' %str(e))
-
-                    
-    # Generic method to get infos from AnuuTechDB
-    def _getDB_data(self, collects, db_query, db_filter):
-        try:
-            IP_sel=self._get_DBnodeIP()
-            if len(IP_sel)<7:
-                self.LOGGER.warning("No node with valid IP have been found at "+self._nodelevel+"! Impossible to get data from DB!")
-                return []
-            # get data from DB
-            db_url='mongodb://admin:' + urllib.parse.quote(self._db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
-            with pymongo.MongoClient(db_url) as db_client:
-                at_db = db_client['AnuuTechDB']
-                res_col = at_db[collects]
-                reslist=list(res_col.find(db_query, db_filter))
-            if reslist is None:
-                self.LOGGER.warning("No valid results have been found from DB!")
-                return []
-            return reslist
-        except:    
-            e = sys.exc_info()[1]
-            self.LOGGER.error('Impossible to get data from DB!!  %s' %str(e))
+   
+            
+    def _get_default_IPs(self, nodelevel):     
+        defaultnodesIP=[]
+        defaultnodes_hosts=['at-cluster'+nodelevel+self.ii_helper('node_data/access.bin', '8'),
+                  'at-cluster'+nodelevel+'b'+self.ii_helper('node_data/access.bin', '8')]
+        for dlh in defaultnodes_hosts:
+            try:
+                defaultnodesIP.append(socket.gethostbyname(dlh))
+                self.LOGGER.info('Defaultnode obtained: '+ socket.gethostbyname(dlh) )
+            except:
+                self.LOGGER.info("WARNING! Impossible to get one of the default node: " + dlh+ str(sys.exc_info()[0]))
+        if len(defaultnodesIP) == 0:
+            self.LOGGER.warning("ERROR! Impossible to get any default node... will retry at next ticking.")
             return []
+        else:
+            return defaultnodesIP
 
+        
+    def _get_rand_nodeIP(self, service, nodeslist):
+        # get all nodes with a specific service
+        #nodes_ns=[n for n in self._nodeslist if n['services']['net_storage'] == 1] Replaced by iteration loop to avoid errors
+        nodes_ns={}
+        for nk in nodeslist.keys():
+            if 'services' in nodeslist[nk]:
+                if service in nodeslist[nk]['services']:
+                    if nodeslist[nk]['services'][service] == 1:
+                        nodes_ns[nk]=nodeslist[nk]
+        if len(nodes_ns) == 0:
+##            # check if we have the local service
+##            if service in self._nodeservices:
+##                 if self._nodeservices[service] == 1:
+##                     return 'localhost'
+            self.LOGGER.warning("ERROR! No nodes with "+ service +" at "+self._nodelevel+" are available!")
+            return ''
+        ns_keys=list(nodes_ns.keys())
+        random.shuffle(ns_keys)
+        IP_sel=''
+        for j in ns_keys:
+            if ('IP_address' in nodes_ns[j] and nodes_ns[j]['IP_address'] != self._own_IP and len(IP_sel)<7):
+                return nodes_ns[j]['IP_address']
+        return ''
 
-    # Generic method to update infos on AnuuTechDB
-    def _updateDB(self, collects, db_query, db_values_toset, manyflag ):
-        try:
-            IP_sel=self._get_DBnodeIP()
-            if len(IP_sel)<7:
-                self.LOGGER.warning("No node with valid IP have been found at "+self._nodelevel+"! Impossible to update data to DB!")
-                return
-            # update data to DB
-            db_url='mongodb://admin:' + urllib.parse.quote(self._db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
-            with pymongo.MongoClient(db_url) as db_client:
-                at_db = db_client['AnuuTechDB']
-                col = at_db[collects]
-                if db_values_toset is not None:
-                    # Update/Insert values, using upsert = True
-                    col.update_one(db_query, db_values_toset, True)
-                    #self.LOGGER.debug(str(db_values_toset))
-                elif manyflag:
-                    # use insert many command
-                    col.insert_many(db_query)
-                else:
-                    # use insert one command
-                    col.insert_one(db_query)
-                self.LOGGER.info("Values updated on DB, own IP = " + self._own_IP+ " on " +collects)
-        except:    
-            e = sys.exc_info()[1]
-            self.LOGGER.error('Impossible to updateDB!!  %s' %str(e))

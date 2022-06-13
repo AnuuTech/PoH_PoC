@@ -23,7 +23,7 @@ import urllib
 import signal
 signal.signal(signal.SIGINT, signal.default_int_handler) # to ensure Signal to be received
 
-Title="AnuuTech Basic client V-0.1.0"
+Title="AnuuTech Basic client V-0.2.0beta"
 
 #helper function
 def ii_helper(fily, sel):
@@ -497,9 +497,9 @@ def msgconsumer(ch, method, properties, body):
         if not own_msg:
             LOGGER.info("PoH R1 Received IS NOT OUR OWN MSG!")
             mlist.insert(0,"PoH R1 Received IS NOT OUR OWN MSG!")
-        else: 
-            # OPTIONAL LOCAL CHECK Deactivated for now, "transactions" collections do not exist anymore
-            # get all infos from DB
+##        else: 
+##            # OPTIONAL LOCAL CHECK Deactivated for now, "transactions" collections do not exist anymore
+##            # get all infos from DB
 ##            random.shuffle(defaultL3nodes)
 ##            IP_DB=defaultL3nodes[0] # TODO get all net storage available nodes
 ##            db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_DB+':27017/?authMechanism=DEFAULT&authSource=admin'
@@ -536,18 +536,18 @@ def msgconsumer(ch, method, properties, body):
 ##                                    +str(x.get('signer_nodeL3')))
             #send to a second node
             # Select L3 node based on hash (sum of all characters), restricted to nodes with poh service
-            if len(nodeslist_poh) != 0:
-                node_uid=list(nodeslist_poh.keys())[(sum(msg['content']['fingerprintL3'].encode()))%len(nodeslist_poh.keys())]
-                headers=initheaders()
-                headers['service']='poh'
-                headers['dest_uid']=node_uid
-                msg['type']='POH_L3_R2'
-                msgtype=3
-                send_msg(headers, msg, msgtype)
-                LOGGER.info("msg POH R2 prepared to be sent: "+str(headers))
-            else:
-                LOGGER.info("Cannot send PoH R2 msg, no node with service active found!")
-                mlist.insert(0,"Cannot send PoH R2 msg, no node with service active found!")
+##            if len(nodeslist_poh) != 0:
+##                node_uid=list(nodeslist_poh.keys())[(sum(msg['content']['fingerprintL3'].encode()))%len(nodeslist_poh.keys())]
+##                headers=initheaders()
+##                headers['service']='poh'
+##                headers['dest_uid']=node_uid
+##                msg['type']='POH_L3_R2'
+##                msgtype=3
+##                send_msg(headers, msg, msgtype)
+##                LOGGER.info("msg POH R2 prepared to be sent: "+str(headers))
+##            else:
+##                LOGGER.info("Cannot send PoH R2 msg, no node with service active found!")
+##                mlist.insert(0,"Cannot send PoH R2 msg, no node with service active found!")
         
     elif (msg.get('type')=='DATA_SAVED' and hdrs.get('dest_uid')==client_uid):
         if hashh.get() == '':
@@ -655,7 +655,8 @@ def prepare_msg():
                 with open (pathh.get(), 'rb') as tfile:
                     tempfile=tfile.read()
                 msg['type']='SAVE_DATA'
-                msg['content']= base64.b64encode(tempfile).decode()
+                msg['content']['file']= base64.b64encode(tempfile).decode()
+                msg['content']['filename']=os.path.split(pathh.get())[1]
                 LOGGER.info("File saving prepared to be sent: "+str(headers))
             else: #getting file back
                 msg['type']='GET_DATA'
