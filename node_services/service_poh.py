@@ -1,5 +1,6 @@
 #import class_service
-from service_class import ReconnectingNodeConsumer 
+from service_class import ReconnectingNodeConsumer
+import settings as S
 import sys
 import os
 import json
@@ -11,36 +12,36 @@ import time
 from collections import Counter
 
 class ServiceRunning(ReconnectingNodeConsumer):
-    POH_BLOCKS_PATH='node_data/blocks.file'
-    NODE_TICK_INTERVAL=5 #overriding the one of service_class
-    ET=1653948000 # epoch trim (31.05.2022 in CET)
     _poh_blocks=[]
+    _nodes_blocks={}
     _txs_received=[]
     _txs_to_validate=[]
     _txs_validated=[]
     _own_last_hash=''
     _last_epoch=0
-    _tx_queries_tosend=[]
 
 
     def _initnode(self):
         super()._initnode()
         #Load blockchain
-        if os.path.isfile(self.POH_BLOCKS_PATH):
-            with open(self.POH_BLOCKS_PATH, 'r') as b_file:
+        if os.path.isfile(S.POH_BLOCKS_PATH):
+            with open(S.POH_BLOCKS_PATH, 'r') as b_file:
                 self._poh_blocks=json.load(b_file)
         else:
             # Genesis block
             height=0
-            b_hash='145120157110_AnnuTech_is_born_74312d646576'
-            epoch=1653948000-self.ET # =0 
+            epoch=0
             # Create second block
-            hh=SHA256.new(b_hash.encode())#put previous block hash
-            hh.update(str(epoch).encode()) #put current epoch
+            hh=SHA256.new(S.GENESIS_HASH.encode())#put previous block hash
+            hh.update(str(1).encode()) #put current epoch
             b_hash2=binascii.hexlify(hh.digest()).decode()
-            self._poh_blocks=[[height, b_hash, epoch],
+            self._poh_blocks=[[height, S.GENESIS_HASH, epoch],
                               [height+1, b_hash2, epoch+1]]
+            
+        # also update own entry in nodes_blocks
+        self._nodes_blocks[self._uid]={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
 
+        self._node_tick_interval=5 #overriding the one of service_class
         self.LOGGER.info("INITALISATION poh service done")
  
     def _msg_process(self, msg, hdrs):
@@ -52,28 +53,28 @@ class ServiceRunning(ReconnectingNodeConsumer):
             fingerprint = self._do_signature(msg['content']['tx_hash'], tt)
             # Select second L3 node based on hash (sum of all characters), restricted to nodes with poh service
             nodes_ps=[]
-            for nk in self._nodeslist_lower.keys():
+            for nk in self._nodeslist.keys():
                 if 'services' in self._nodeslist[nk]:
                     if 'poh' in self._nodeslist[nk]['services']:
                         if (self._nodeslist[nk]['services']['poh'] == 1):
-                            nodes_ps.append(self._nodeslist[nk])
+                            nodes_ps.append([nk, self._nodeslist[nk]])
             if len(nodes_ps) != 0:
                 headers=self._initheaders()
                 headers['service']='poh'
                 sumfp=(sum(fingerprint.encode()))%len(nodes_ps)
-                headers['dest_uid']=nodes_ps[sumfp]['uid']
-                headers['dest_IP']=nodes_ps[sumfp]['IP_address']
+                headers['dest_uid']=nodes_ps[sumfp][0]
+                headers['dest_IP']=nodes_ps[sumfp][1]['IP_address']
                 msg['type']='POH_L3_R2'
                 msg['content']['timestamp']=tt
                 msg['content']['fingerprintL3']=fingerprint
                 msg['content']['signer_nodeL3']=self._uid
                 self.LOGGER.info("msg POH R2 prepared to be sent: "+str(headers))
-                self._msgs_to_send.append([msg, headers, headers['dest_IP'], 'L3'])
+                self._msgs_to_send.append([msg.copy(), headers.copy(), headers['dest_IP'], 'L3'])
                 # Sends also back to client for information only!
                 headers['dest_uid']=hdrs.get('sender_uid')
                 headers['dest_IP']=hdrs.get('sender_node_IP')
                 msg['type']='POH_L3_R1_DONE'
-                self.LOGGER.info("POH R1 sending back to client, msg "+str(msgback['uid'])+" " +str(headers))
+                self.LOGGER.info("POH R1 sending back to client, msg "+str(msg['uid'])+" " +str(headers))
                 self._msgs_to_send.append([msg, headers, headers['dest_IP'], 'L3'])
             else:
                 self.LOGGER.warning("Cannot send PoH R2 msg, no node with service active found!")
@@ -94,13 +95,13 @@ class ServiceRunning(ReconnectingNodeConsumer):
                     if 'services' in self._nodeslist_lower[nk]:
                         if 'poh' in self._nodeslist_lower[nk]['services']:
                             if (self._nodeslist_lower[nk]['services']['poh'] == 1):
-                                nodes_ps.append(self._nodeslist_lower[nk])
+                                nodes_ps.append([nk, self._nodeslist_lower[nk]])
                 if len(nodes_ps) != 0:
                     headers=self._initheaders()
                     headers['service']='poh'
                     sumfp=(sum(fingerprint_L3L2.encode()))%len(nodes_ps)
-                    headers['dest_uid']=nodes_ps[sumfp]['uid']
-                    headers['dest_IP']=nodes_ps[sumfp]['IP_address']
+                    headers['dest_uid']=nodes_ps[sumfp][0]
+                    headers['dest_IP']=nodes_ps[sumfp][1]['IP_address']
                     msg['type']='POH_L2_R3'
                     msg['content']['fingerprint_L3L2']=fingerprint_L3L2
                     msg['content']['signer_node_L3L2']=self._uid
@@ -125,13 +126,13 @@ class ServiceRunning(ReconnectingNodeConsumer):
                     if 'services' in self._nodeslist[nk]:
                         if 'poh' in self._nodeslist[nk]['services']:
                             if (self._nodeslist[nk]['services']['poh'] == 1):
-                                nodes_ps.append(self._nodeslist[nk])
+                                nodes_ps.append([nk, self._nodeslist[nk]])
                 if len(nodes_ps) != 0:
                     headers=self._initheaders()
                     headers['service']='poh'
                     sumfp=(sum(fingerprint2.encode()))%len(nodes_ps)
-                    headers['dest_uid']=nodes_ps[sumfp]['uid']
-                    headers['dest_IP']=nodes_ps[sumfp]['IP_address']
+                    headers['dest_uid']=nodes_ps[sumfp][0]
+                    headers['dest_IP']=nodes_ps[sumfp][1]['IP_address']
                     msg['type']='POH_L2_R4'
                     msg['content']['fingerprintL2']=fingerprint2
                     msg['content']['signer_nodeL2']=self._uid
@@ -156,13 +157,13 @@ class ServiceRunning(ReconnectingNodeConsumer):
                     if 'services' in self._nodeslist_lower[nk]:
                         if 'poh' in self._nodeslist_lower[nk]['services']:
                             if (self._nodeslist_lower[nk]['services']['poh'] == 1):
-                                nodes_ps.append(self._nodeslist_lower[nk])
+                                nodes_ps.append([nk, self._nodeslist_lower[nk]])
                 if len(nodes_ps) != 0:
                     headers=self._initheaders()
                     headers['service']='poh'
                     sumfp=(sum(fingerprint_L2L1.encode()))%len(nodes_ps)
-                    headers['dest_uid']=nodes_ps[sumfp]['uid']
-                    headers['dest_IP']=nodes_ps[sumfp]['IP_address']
+                    headers['dest_uid']=nodes_ps[sumfp][0]
+                    headers['dest_IP']=nodes_ps[sumfp][1]['IP_address']
                     msg['type']='POH_L1_R5'
                     msg['content']['fingerprint_L2L1']=fingerprint_L2L1
                     msg['content']['signer_node_L2L1']=self._uid
@@ -187,13 +188,13 @@ class ServiceRunning(ReconnectingNodeConsumer):
                     if 'services' in self._nodeslist[nk]:
                         if 'poh' in self._nodeslist[nk]['services']:
                             if (self._nodeslist[nk]['services']['poh'] == 1):
-                                nodes_ps.append(self._nodeslist[nk])
+                                nodes_ps.append([nk, self._nodeslist[nk]])
                 if len(nodes_ps) != 0:
                     headers=self._initheaders()
                     headers['service']='poh'
                     sumfp=(sum(fingerprint3.encode()))%len(nodes_ps)
-                    headers['dest_uid']=nodes_ps[sumfp]['uid']
-                    headers['dest_IP']=nodes_ps[sumfp]['IP_address']
+                    headers['dest_uid']=nodes_ps[sumfp][0]
+                    headers['dest_IP']=nodes_ps[sumfp][1]['IP_address']
                     msg['type']='POH_L1_R6'
                     msg['content']['fingerprintL1']=fingerprint3
                     msg['content']['signer_nodeL1']=self._uid
@@ -239,14 +240,14 @@ class ServiceRunning(ReconnectingNodeConsumer):
         # RECEIVING TXS collected by other L1 node
         elif msg.get('type')=='POH_TXS':
             if len(msg['content'])>0:
-                for each el in msg['content']:
+                for el in msg['content']:
                     if 'tx_hash' in el: #quick verif that it's a tx
                         self._txs_to_validate.append(el)
             self.LOGGER.info("PoH TXS receiving " +str(len(msg['content'])-1) + " txs.")
 
         # RECEIVING LATEST BLOCKS of other L1 node
         elif msg.get('type')=='POH_LATEST_BLOCKS':
-            self._nodeslist[msg['content']['node_uid']]['blocks']=msg['content']['blocks']
+            self._nodes_blocks[msg['content']['node_uid']]=msg['content']['blocks']
             self.LOGGER.info("PoH latest blocks received from node " +str(msg['content']['node_uid']))
 
         return True
@@ -260,11 +261,10 @@ class ServiceRunning(ReconnectingNodeConsumer):
             nodesalllist.update(self._nodeslist_upper)
             # get pubkey from nodeslist
             for nk in nodesalllist.keys():
-                if 'uid' in nodesalllist[nk]:
-                    if nodesalllist[nk]['uid'] == node_uid:
-                        if 'pubkey' in nodesalllist[nk]:
-                            nodepubkey=RSA.importKey(nodesalllist[nk]['pubkey'].encode())
-                            #self.LOGGER.debug(str(node_uid)+" corresponding pubkey found!")
+                if nk == node_uid:
+                    if 'pubkey' in nodesalllist[nk]:
+                        nodepubkey=RSA.importKey(nodesalllist[nk]['pubkey'].encode())
+                        #self.LOGGER.debug(str(node_uid)+" corresponding pubkey found!")
             if nodepubkey is not None:
                 #Verify fingerprint
                 hh=SHA256.new(tx_hash.encode())
@@ -292,16 +292,16 @@ class ServiceRunning(ReconnectingNodeConsumer):
         #Create fingerprint
         hh=SHA256.new(tx_hash.encode())
         hh.update(str(input2).encode())
-        signer = PKCS115_SigScheme(self._PRIVKEY)
+        signer = PKCS115_SigScheme(self._privkey)
         return binascii.hexlify(signer.sign(hh)).decode()
 
 
     def _ticking_actions(self):
         super()._ticking_actions()
 
+        time_in_epoch=divmod(time.time()-S.E_TRIM,60)[1]
         if self._nodelevel == 'L1':
-            self.LOGGER.debug("Current Epoch: "+str(divmod(time.time()-self.ET,60)[0]) + " and last block's epoch: "+str(self._poh_blocks[-1][2]))
-            time_in_epoch=divmod(time.time()-self.ET,60)[1]
+            self.LOGGER.debug("Current Epoch: "+str(divmod(time.time()-S.E_TRIM,60)[0]) + " and last block's epoch: "+str(self._poh_blocks[-1][2]))
             if  time_in_epoch > 0 and time_in_epoch <= 10: # between 0 and 10 seconds after epoch start, share all received txs
                 self._share_all_pending_txs()
             elif  time_in_epoch > 15 and time_in_epoch <= 25: # between 15 to 25 seconds after epoch start, to let time for txs to reach all L1
@@ -319,19 +319,22 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 # share the latest blocks
                 self._share_latest_blocks() #TODO not sure it is useful (when no txs come?)
                 # save the blocks on disk
-                with open(self.POH_BLOCKS_PATH, 'w') as b_file:
+                with open(S.POH_BLOCKS_PATH, 'w') as b_file:
                     b_file.write(json.dumps(self._poh_blocks))       
         return
 
 
     def _share_all_pending_txs(self):
         # emptying the txs_received safely, in case new txs are currently received 
-        tempall=[]
+        temp_all=[]
         for i in range(0, len(self._txs_received)):
-            tempall.append(self._txs_received.pop(0))
-        self._txs_to_validate.append(temp_all)
+            temp_all.append(self._txs_received.pop(0))
+        if len(temp_all)==0:
+            return
+
+        self._txs_to_validate.extend(temp_all)
         
-        # prepare the msg to be sent
+        # prepare the msg to be sent with the txs received
         headers=self._initheaders()
         headers['service']='poh'
         msg=self._initmsg()
@@ -352,21 +355,22 @@ class ServiceRunning(ReconnectingNodeConsumer):
           
 
     def _compute_new_block(self):
-        # don't run if finalize has not been done
-        if self._last_epoch>0:
+        # don't run if finalize has not been done or no txs have come
+        if self._last_epoch>0 or len(self._txs_to_validate)==0:
             return
         # determine epoch
-        epoch=divmod(time.time()-self.ET, 60)[0]
+        epoch=divmod(time.time()-S.E_TRIM, 60)[0]
 
         # order all txs by timestamps TODO check if txs have not already been included in a previous block?
+        print(self._txs_to_validate)
         txs_pend=sorted(self._txs_to_validate, key=lambda t: t['timestamp'])
         self._txs_to_validate=[]
 
         # check all txs with nodes public keys
         txs_valid=[]
         for tx in txs_pend:
-            if isinstance(tx['timestamp'], float) and divmod(tx['timestamp']-self.ET,60)[0] < epoch: # tx of current epoch are not taken into account yet
-                if (self._signature_verif(tx['tx_hash'], tx['timestamp'], tx['fingerprintL3'], tx['signer_nodeL3']) and
+            if isinstance(tx['timestamp'], float) and divmod(tx['timestamp']-S.E_TRIM,60)[0] < epoch: # tx of current epoch are not taken into account yet
+                if (#self._signature_verif(tx['tx_hash'], tx['timestamp'], tx['fingerprintL3'], tx['signer_nodeL3']) and NO ACCESS TO PUBKEY OF L3 node at L1 level
                     self._signature_verif(tx['tx_hash'], tx['fingerprintL3'], tx['fingerprintL2'], tx['signer_nodeL2']) and
                     self._signature_verif(tx['tx_hash'], tx['fingerprintL2'], tx['fingerprintL1'], tx['signer_nodeL1'])):
                     txs_valid.append(tx)
@@ -386,8 +390,8 @@ class ServiceRunning(ReconnectingNodeConsumer):
             # Add new block!
             self._poh_blocks.append([new_height, b_hash, epoch])
             self.LOGGER.info("A new block has been added! " + str([new_height, b_hash, epoch]))
-            # also update own entry in nodeslist
-            self._nodeslist[self._uid]['blocks']={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
+            # also update own entry in nodes_blocks
+            self._nodes_blocks[self._uid]={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
 
             # share latest blocks with all L1 nodes with PoH
             self._share_latest_blocks()
@@ -399,19 +403,14 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
 
     def _share_latest_blocks(self):
-        # emptying the txs_received safely, in case new txs are currently received 
-        tempall=[]
-        for i in range(0, len(self._txs_received)):
-            tempall.append(self._txs_received.pop(0))
-        self._txs_to_validate.append(temp_all)
-        
+
         # prepare the msg to be sent
         headers=self._initheaders()
         headers['service']='poh'
         msg=self._initmsg()
         msg['type']='POH_LATEST_BLOCKS'
         msg['content']['node_uid']=self._uid
-        msg['content']['blocks']={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
+        msg['content']['blocks']=self._nodes_blocks[self._uid]
 
         #send to all L1 nodes with PoH
         j=0
@@ -428,13 +427,12 @@ class ServiceRunning(ReconnectingNodeConsumer):
         
     def _check_blocks(self):
         # determine epoch
-        epoch=divmod(time.time()-self.ET, 60)[0]
+        epoch=divmod(time.time()-S.E_TRIM, 60)[0]
         
         blocks=[]
-        for nk in self._nodeslist.keys():
-            if 'blocks' in self._nodeslist[nk]:
-                if 'current' in self._nodeslist[nk]['blocks']and 'previous' in self._nodeslist[nk]['blocks'] and 'height' in self._nodeslist[nk]['blocks']:
-                    blocks.append([n['blocks']['current'],n['blocks']['previous'], n['blocks']['height']])
+        for nk in self._nodes_blocks.keys():
+            if 'current' in self._nodes_blocks[nk] and 'previous' in self._nodes_blocks[nk] and 'height' in self._nodes_blocks[nk]:
+                blocks.append([self._nodes_blocks[nk]['current'], self._nodes_blocks[nk]['previous'], self._nodes_blocks[nk]['height']])
                     
         # sort by chains
         # get chains heights in a descending order
@@ -462,6 +460,9 @@ class ServiceRunning(ReconnectingNodeConsumer):
         for c in chains.keys():
             nb_chains=nb_chains+chains[c][1]
 
+        if nb_chains==0:
+            return # node has probably still not received all other nodes info
+
         # check which chain we belong to and compare occurence
         own_occ=0
         max_occ=0
@@ -484,6 +485,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
             self._poh_blocks[-1][0]=chains[max_occ_chains[0]][0] # current height
             self._poh_blocks[-1][2]=epoch # current epoch
             self._nodeslist[self._uid]['blocks']={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
+            self._share_latest_blocks()
             self.LOGGER.info("Switching to highest chain: " + str(chains[max_occ_chains[0]]))
         elif max_occ > nb_chains/2: # there is a dominating chain and we are not on it:
             # Switch chain TODO privilege LONGEST chain if several existing? (already switching to HIGHEST)
@@ -492,14 +494,16 @@ class ServiceRunning(ReconnectingNodeConsumer):
             self._poh_blocks[-1][0]=chains[max_occ_chains[0]][0] # current height
             self._poh_blocks[-1][2]=epoch # current epoch
             self._nodeslist[self._uid]['blocks']={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
+            self._share_latest_blocks()
             self.LOGGER.info("Switching to dominating chain: " + str(chains[max_occ_chains[0]]))         
-        elif (time.time()-self.ET)/60 > self._poh_blocks[-1][2] + 1.5*self.NODE_TICK_INTERVAL: # all nodes should have had time to compute next block
+        elif (time.time()-S.E_TRIM)/60 > self._poh_blocks[-1][2] + 1.5*self._node_tick_interval: # all nodes should have had time to compute next block
             # Switch chain TODO privilege longest chain if several existing?
             self._poh_blocks[-1][1]=max_occ_chains[0]
             self._poh_blocks[-2][1]=chains[max_occ_chains[0]][2]
             self._poh_blocks[-1][0]=chains[max_occ_chains[0]][0]
             self._poh_blocks[-1][2]=epoch # current epoch
             self._nodeslist[self._uid]['blocks']={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
+            self._share_latest_blocks()
             self.LOGGER.info("Switching to better chain: " + str(chains[max_occ_chains[0]]))
         else:
             self.LOGGER.info("For now staying on current chain: " + str(self._poh_blocks[-1]))# for now stay on chain
@@ -515,7 +519,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
             msg=self._initmsg()
             msg['type']='SAVE_BLOCK'
             msg['content']={'height': self._poh_blocks[-1][0],
-                            'current_hash': self._poh_blocks[-1][1]
+                            'current_hash': self._poh_blocks[-1][1],
                             'previous_hash': self._poh_blocks[-2][1],
                             'epoch' : self._last_epoch,
                             'transactions': self._txs_validated}
@@ -545,13 +549,11 @@ class ServiceRunning(ReconnectingNodeConsumer):
 def main():
 
     # Check arguments
-    if len(sys.argv) == 2:
-        if sys.argv[1] == 'L1' or sys.argv[1] == 'L2' or sys.argv[1] == 'L3' :
-            nodelevel=sys.argv[1]
-
-            # Create Instance and start the service
-            consumer = ServiceRunning(nodelevel, 'poh')
-            consumer.run()
+    if len(sys.argv) == 2 and (sys.argv[1] == 'L1' or sys.argv[1] == 'L2' or sys.argv[1] == 'L3') :
+        nodelevel=sys.argv[1]
+        # Create Instance and start the service
+        consumer = ServiceRunning(nodelevel, 'poh')
+        consumer.run()
     else:
         print("Script needs 1 parameter (L1, L2 or L3). Please retry.")
         exit()

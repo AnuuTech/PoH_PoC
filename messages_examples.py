@@ -117,31 +117,6 @@ def prepare_msg(rd):
             'timestamp': time.time()
             }
 
-
-    ### Proof-of-Hash second node request (POH_L3_R2)
-    elif rd == 5:
-        # headers
-        headers = {
-            'sender_uid': client_uid,
-            'sender_node_IP': IP_sel,
-            'dest_uid': 'L3Node_iihwQA', # selected second Layer 3 node uid 
-            'dest_IP': '',
-            'dest_all': '',
-            'service': 'poh',
-            'retry': 0
-            }
-
-        # message
-        msg={
-            'uid': str(random.randrange(0,9999999)),
-            'content': {'tx_hash': '334d016f755cd6dc58c53a86e183882f8ec14f52fb05345887c8a5edd42c87b7',
-                        'timestamp' : timestamp, # received back from POH_L3_R1 request
-                        'fingerprintL3': fingerprintL3, # received back from POH_L3_R1 request
-                        'signer_nodeL3': signer_nodeL3}, # received back from POH_L3_R1 request 
-            'type': 'POH_L3_R2',
-            'timestamp': time.time()
-            }
-
     ### Data storage - data sending
     elif rd == 6:
         # headers

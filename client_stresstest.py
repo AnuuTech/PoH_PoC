@@ -46,8 +46,8 @@ if len(sys.argv) == 2:
         defaultL3nodes.append('192.168.1.71')
 
 #get default L3nodes
-defaultL3nodes_hosts=['at-clusterL3'+ii_helper('node_data/access.bin', '8'),
-                      'at-clusterL3b'+ii_helper('node_data/access.bin', '8')]
+defaultL3nodes_hosts=['anuuTechL3'+ii_helper('node_data/access.bin', '8'),
+                      'anuuTechL3b'+ii_helper('node_data/access.bin', '8')]
 for dgh in defaultL3nodes_hosts:
     try:
         defaultL3nodes.append(socket.gethostbyname(dgh))
@@ -315,9 +315,9 @@ def sending_msg():
     global connection, channel2, connection2, sending, IP_sel
     global i, timest_out, timest_i, cur_timeout, old_speed
     # get node uid from DB
-    db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+defaultL3nodes[0]+':27017/?authMechanism=DEFAULT&authSource=admin'
+    db_url='mongodb://explorer:' + urllib.parse.quote(db_pass) +'@'+defaultL3nodes[0]+':28991/?authMechanism=DEFAULT&authSource=admin'
     db_client = pymongo.MongoClient(db_url)
-    at_db = db_client['AnuuTechDB']
+    at_db = db_client['AnuuTech_DB']
     nodes_col = at_db['nodes']
     db_query = { 'IP_address': IP_sel}
     db_filter = {'uid':1, '_id':0}
@@ -346,7 +346,7 @@ def sending_msg():
                                        properties=pika.BasicProperties(headers=headers),body=(json.dumps(msg)))
                 print("msg sent: CHAT " + msg['content']['chat_msg'] + " "+ msg['uid'])
                 isent += 1
-            elif app.varC2.get():
+            if app.varC2.get():
                 msg['uid']= str(i)
                 headers['service']= 'poh'
                 msg['type']= 'POH_L3_R1'
@@ -419,9 +419,9 @@ def getL3nodesList():
             random.shuffle(defaultL3nodes)
             IP_sel=defaultL3nodes[0]
             # get all infos from DB
-            db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
+            db_url='mongodb://explorer:' + urllib.parse.quote(db_pass) +'@'+IP_sel+':28991/?authMechanism=DEFAULT&authSource=admin'
             db_client = pymongo.MongoClient(db_url)
-            at_db = db_client['AnuuTechDB']
+            at_db = db_client['AnuuTech_DB']
             nodes_col = at_db['nodes']
             db_query = { 'level': 'L3'}
             db_filter = {'uid':1, 'IP_address':1, '_id':0, 'services':1}

@@ -1,23 +1,22 @@
+import settings as S
 import os
 import json
 import sys
 
 # Check list of services configured
-SERVICES_PATH='node_services/services.conf'
 LAUNCHER_PATH='start_node.sh'
 STOPPER_PATH='stop_node.sh'
-IP_PATH='node_data/ip.file'
 
 def startingdef(nodelevel):
     serv_list={}
-    if os.path.isfile(SERVICES_PATH):
-        with open(SERVICES_PATH, 'r') as serv_file:
+    if os.path.isfile(S.SERVICES_PATH):
+        with open(S.SERVICES_PATH, 'r') as serv_file:
             serv_list=json.load(serv_file)
     else:
         #default config, net_maintenance is mandatory
         serv_list={'net_maintenance': 1, 'chat': 0, 'net_storage': 0,
                    'poh': 0, 'data_storage': 0}
-        with open(SERVICES_PATH, 'w') as serv_file:
+        with open(S.SERVICES_PATH, 'w') as serv_file:
                 serv_file.write(json.dumps(serv_list))
     print("List of services configured: " + str(serv_list))
     prepare(nodelevel, serv_list)
@@ -26,7 +25,7 @@ def starting(nodelevel,s1, s2, s3, s4):
     #apply config
     serv_list={'net_maintenance': 1, 'chat': int(s1), 'net_storage': int(s2),
                'poh': int(s3), 'data_storage': int(s4)}
-    with open(SERVICES_PATH, 'w') as serv_file:
+    with open(S.SERVICES_PATH, 'w') as serv_file:
         serv_file.write(json.dumps(serv_list))
     print("List of services configured: " + str(serv_list))
     prepare(nodelevel, serv_list)
@@ -43,7 +42,7 @@ def prepare(nodelevel, serv_list):
                 if serv=='net_maintenance':
                     line='echo "Waiting for net_maintenance service to start"\n'
                     lau_file.write(line)
-                    line='while [ ! -f '+IP_PATH+' ]\n'
+                    line='while [ ! -f '+S.IP_PATH+' ]\n'
                     lau_file.write(line)
                     line='do\n'
                     lau_file.write(line)

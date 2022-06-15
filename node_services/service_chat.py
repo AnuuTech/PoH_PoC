@@ -33,10 +33,10 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 j=0
                 for nk in self._nodeslist.keys():
                     if 'services' in self._nodeslist[nk]:
-                        if 'chat' in n['services']:
+                        if 'chat' in self._nodeslist[nk]['services']:
                             if (self._nodeslist[nk]['services']['chat'] == 1):
                                 if 'IP_address' in self._nodeslist[nk] and self._nodeslist[nk]['IP_address'] != self._own_IP:
-                                    headers['dest_IP']=self._nodeslist[nk]['IP_address']
+                                    hdrs['dest_IP']=self._nodeslist[nk]['IP_address']
                                     self._msgs_to_send.append([msg, hdrs, self._nodeslist[nk]['IP_address'], 'L3'])
                                     j=j+1
                 self.LOGGER.info("CHAT broadcast msg "+msg['uid']+" will be forwarded to: "+str(j)+" nodes.")
@@ -60,15 +60,13 @@ class ServiceRunning(ReconnectingNodeConsumer):
 def main():
 
     # Check arguments
-    if len(sys.argv) == 2:
-        if (sys.argv[1] == 'L3'):
-            nodelevel=sys.argv[1]
-            
-            # Create Instance and start the service
-            consumer = ServiceRunning(nodelevel, 'chat')
-            consumer.run()
+    if len(sys.argv) == 2 and (sys.argv[1] == 'L3'):
+        nodelevel=sys.argv[1]
+        # Create Instance and start the service
+        consumer = ServiceRunning(nodelevel, 'chat')
+        consumer.run()
     else:
-        print("The 'chat' service only works on L3")
+        print("The 'chat' service only works on L3.")
         exit()
         
 if __name__ == '__main__':

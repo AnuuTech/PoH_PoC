@@ -1,6 +1,6 @@
 # Source for pika part:
 # https://github.com/pika/pika/blob/master/examples/asynchronous_consumer_example.py
-
+import settings as S
 import functools
 import logging
 import time
@@ -15,6 +15,7 @@ import random
 from Crypto.PublicKey import RSA
 from threading import Timer, Thread
 from collections import Counter
+import traceback
 import signal
 signal.signal(signal.SIGINT, signal.default_int_handler) # to ensure Signal to be received
 
@@ -251,7 +252,7 @@ class NodeConsumer(object):
                 self.on_cancelok, userdata=self._consumer_tag)
             self._channel.basic_cancel(self._consumer_tag, cb)
 
-    def on_cancelok(self, userdata):
+    def on_cancelok(self, _unused_frame, userdata):
         """This method is invoked by pika when RabbitMQ acknowledges the
         cancellation of a consumer. At this point we will close the channel.
         This will invoke the on_channel_closed method once the channel has been
@@ -304,24 +305,7 @@ class ReconnectingNodeConsumer(object):
     """This is a consumer that will reconnect if the nested
     Consumer indicates that a reconnect is necessary.
     """
-
-    SW_VERSION='0.2.0beta'
-    VHOST='anuutech'
-    REQ_TIMEOUT=5 #timeout for http requests
-    NODE_TICK_INTERVAL=60.0
-    MPORT=15672
-    PORT=5672
     LOGGER = logging.getLogger('SERVICE_LOGGER')
-    MAIN_PATH=''#Disabled for now os.path.abspath(os.path.join(os.getcwd(), os.pardir))
-    IP_PATH=MAIN_PATH+'node_data/ip.file'
-    NODESLIST_PATH=MAIN_PATH+'node_data/nodeslist.file'
-    NODESLIST_LOWER_PATH=MAIN_PATH+'node_data/nodeslist_lower.file'
-    NODESLIST_UPPER_PATH=MAIN_PATH+'node_data/nodeslist_upper.file'
-    UID_PATH=MAIN_PATH+'node_data/node_uid.file'
-    PS_PATH=MAIN_PATH+'node_data/ps_loc.file'
-    SERVICES_PATH='node_services/services.conf'
-    PUBKEY_PATH='node_data/node_pub.key'
-    PRIVKEY_PATH='node_data/node_priv.key'
 
     #helper functions
     def ii_helper(self, fily, sel):
@@ -357,26 +341,27 @@ class ReconnectingNodeConsumer(object):
         self._service_stats={}
         self._node_user='layer_local'
         self._np='pass_'
-        self._db_pass=self.ii_helper('node_data/access.bin', '12')
+        self._db_pass=self.ii_helper('node_data/access.bin', '11')
+        self._node_tick_interval=S.DEFAULT_TICK_INTERVAL
 
         # Get Signature keys
-        if not os.path.isfile(self.PUBKEY_PATH) or not os.path.isfile(self.PRIVKEY_PATH):
+        if not os.path.isfile(S.PUBKEY_PATH) or not os.path.isfile(S.PRIVKEY_PATH):
             # issue keys
             private_key = RSA.generate(1024)
             public_key = private_key.publickey()
             self.LOGGER.info("No RSA keys found, new ones are created")
-            with open (self.PRIVKEY_PATH, 'wb') as prv_file:
+            with open (S.PRIVKEY_PATH, 'wb') as prv_file:
                 prv_file.write(private_key.exportKey('PEM','annu_seed-l'))
-            with open (self.PUBKEY_PATH, 'wb') as pub_file:
+            with open (S.PUBKEY_PATH, 'wb') as pub_file:
                 pub_file.write(public_key.exportKey('PEM'))
         else:
-            with open (self.PRIVKEY_PATH, 'rb') as prv_file:
+            with open (S.PRIVKEY_PATH, 'rb') as prv_file:
                 private_key=RSA.importKey(prv_file.read(),'annu_seed-l')
-            with open (self.PUBKEY_PATH, 'rb') as pub_file:
+            with open (S.PUBKEY_PATH, 'rb') as pub_file:
                 public_key=RSA.importKey(pub_file.read())
                 self.LOGGER.debug("RSA keys sucessfully loaded.")
-        self._PUBKEY=public_key
-        self._PRIVKEY=private_key
+        self._pubkey=public_key
+        self._privkey=private_key
 
     def run(self):
         #LOGGER init
@@ -392,16 +377,16 @@ class ReconnectingNodeConsumer(object):
         self.LOGGER.info("Service "+self._service +" has started\n")
 
         #update password of node
-        with open(self.PS_PATH, 'r') as ps_file:
+        with open(S.PS_PATH, 'r') as ps_file:
             self._np=self._np+ps_file.read()
 
         #node name read from uid
-        if os.path.isfile(self.UID_PATH):
-            with open(self.UID_PATH, 'r') as uid_file:
+        if os.path.isfile(S.UID_PATH):
+            with open(S.UID_PATH, 'r') as uid_file:
                 self._uid=uid_file.read().strip()
 
         #get list of services on the nodes
-        with open(self.SERVICES_PATH, 'r') as serv_file:
+        with open(S.SERVICES_PATH, 'r') as serv_file:
             self._nodeservices=json.load(serv_file)
             self.LOGGER.info("List of services configured: " + str(self._nodeservices))
       
@@ -410,7 +395,7 @@ class ReconnectingNodeConsumer(object):
 
         # Update consumer connection parameters
         credentials = pika.PlainCredentials(self._node_user, self._np)
-        self._pikaconn_parameters = pika.ConnectionParameters('localhost', self.PORT, self.VHOST, credentials,
+        self._pikaconn_parameters = pika.ConnectionParameters('localhost', S.PORT, S.VHOST, credentials,
                                                               heartbeat=10)
         
         #First initialisation of node
@@ -456,23 +441,23 @@ class ReconnectingNodeConsumer(object):
 
     def _initnode(self):
         #IP from file
-        if os.path.isfile(self.IP_PATH):
-            with open(self.IP_PATH, 'r') as ip_file:
+        if os.path.isfile(S.IP_PATH):
+            with open(S.IP_PATH, 'r') as ip_file:
                 self._own_IP=ip_file.read().strip()
 
-        #nodelist read from file
-        if os.path.isfile(self.NODESLIST_PATH):
-            with open(self.NODESLIST_PATH, 'r') as nodes_file:
+        #nodeslist read from file
+        if os.path.isfile(S.NODESLIST_PATH):
+            with open(S.NODESLIST_PATH, 'r') as nodes_file:
                 self._nodeslist=json.load(nodes_file)
 
-        #lower nodelist read from file
-        if os.path.isfile(self.NODESLIST_LOWER_PATH):
-            with open(self.NODESLIST_LOWER_PATH, 'r') as nodes_file:
+        #lower nodeslist read from file
+        if os.path.isfile(S.NODESLIST_LOWER_PATH):
+            with open(S.NODESLIST_LOWER_PATH, 'r') as nodes_file:
                 self._nodeslist_lower=json.load(nodes_file) 
 
-        #upper nodelist read from file
-        if os.path.isfile(self.NODESLIST_UPPER_PATH):
-            with open(self.NODESLIST_UPPER_PATH, 'r') as nodes_file:
+        #upper nodeslist read from file
+        if os.path.isfile(S.NODESLIST_UPPER_PATH):
+            with open(S.NODESLIST_UPPER_PATH, 'r') as nodes_file:
                 self._nodeslist_upper=json.load(nodes_file) 
 
         # Create service queue
@@ -515,24 +500,24 @@ class ReconnectingNodeConsumer(object):
             self._ticking_actions()
         self._first_init = False
 
-        t = Timer(self.NODE_TICK_INTERVAL, self._ticking)
+        t = Timer(self._node_tick_interval, self._ticking)
         t.daemon=True
         t.start()
 
     def _ticking_actions(self):
-        #nodelist updated from file
-        if os.path.isfile(self.NODESLIST_PATH):
-            with open(self.NODESLIST_PATH, 'r') as nodes_file:
+        #nodeslist updated from file
+        if os.path.isfile(S.NODESLIST_PATH):
+            with open(S.NODESLIST_PATH, 'r') as nodes_file:
                 self._nodeslist=json.load(nodes_file)
 
-        #lower nodelist updated from file
-        if os.path.isfile(self.NODESLIST_LOWER_PATH):
-            with open(self.NODESLIST_LOWER_PATH, 'r') as nodes_file:
+        #lower nodeslist updated from file
+        if os.path.isfile(S.NODESLIST_LOWER_PATH):
+            with open(S.NODESLIST_LOWER_PATH, 'r') as nodes_file:
                 self._nodeslist_lower=json.load(nodes_file)
 
-        #upper nodelist read from file
-        if os.path.isfile(self.NODESLIST_UPPER_PATH):
-            with open(self.NODESLIST_UPPER_PATH, 'r') as nodes_file:
+        #upper nodeslist read from file
+        if os.path.isfile(S.NODESLIST_UPPER_PATH):
+            with open(S.NODESLIST_UPPER_PATH, 'r') as nodes_file:
                 self._nodeslist_upper=json.load(nodes_file)
 
         #update and save service stats
@@ -546,7 +531,7 @@ class ReconnectingNodeConsumer(object):
         for st in self._service_stats.keys():
             tot=tot+self._service_stats[st]
         if self._uid in self._nodeslist:
-            self._nodeslist[self._uid][self._service]={'nb_of_msg_processed': tot}
+            self._nodeslist[self._uid]['service_'+self._service]={'nb_of_msg_processed': tot}
         #write service stats to file
         with open(self._service_stats_path, 'w') as stat_file:
             stat_file.write(json.dumps(self._service_stats))
@@ -569,8 +554,8 @@ class ReconnectingNodeConsumer(object):
                 self._service_stats[hdrs['sender_uid']]=1
             return (self._msg_process(msg, hdrs))
         except:
-            e = sys.exc_info()[1]
-            logmsg=str("<p>Problem while consuming: %s</p>" % e )
+            e = sys.exc_info()
+            logmsg=str("<p>Problem while consuming: %s</p>" % str(traceback.format_exc()) )
             self.LOGGER.error(logmsg)
             return False
         
@@ -595,6 +580,7 @@ class ReconnectingNodeConsumer(object):
             'dest_IP': '',
             'dest_all': '',
             'service': self._service,
+            'service_forward': '',
             'retry': 0
             }
         return basic_headers
@@ -642,7 +628,7 @@ class ReconnectingNodeConsumer(object):
     def _sender(self, msghdrs, send_credentials, IP, send_ex, level):
         # creation of sending connection:
         try:
-            parameters = pika.ConnectionParameters(IP, self.PORT, self.VHOST, send_credentials,
+            parameters = pika.ConnectionParameters(IP, S.PORT, S.VHOST, send_credentials,
                                                    heartbeat=6)
             sendingconn = pika.BlockingConnection(parameters)
             sendingchan = sendingconn.channel()
@@ -666,11 +652,11 @@ class ReconnectingNodeConsumer(object):
                         # Get a node with same service
                         IP_sel=''
                         if level == self._nodelevel:
-                            IP_sel=self._get_rand_nodeIP(el[1]['service'], self._nodeslist)
+                            IP_sel=self._get_rand_nodeIP(el[1]['service'], self._nodeslist, '')
                         elif int(level[1]) < int(self._nodelevel[1]) :
-                            IP_sel=self._get_rand_nodeIP(el[1]['service'], self._nodeslist_lower)
+                            IP_sel=self._get_rand_nodeIP(el[1]['service'], self._nodeslist_lower, '')
                         else:
-                            IP_sel=self._get_rand_nodeIP(el[1]['service'], self._nodeslist_upper)                        
+                            IP_sel=self._get_rand_nodeIP(el[1]['service'], self._nodeslist_upper, '')                        
 
                         if len(IP_sel) < 7:
                             self.LOGGER.error("No other node with service "+el[1]['service']+" is available, impossible to process msg "+el[0]['uid'])
@@ -700,11 +686,11 @@ class ReconnectingNodeConsumer(object):
                         # Get a node with same service
                         IP_sel=''
                         if level == self._nodelevel:
-                            IP_sel=self._get_rand_nodeIP(el[1]['service'], self._nodeslist)
+                            IP_sel=self._get_rand_nodeIP(el[1]['service'], self._nodeslist, '')
                         elif int(level[1]) < int(self._nodelevel[1]) :
-                            IP_sel=self._get_rand_nodeIP(el[1]['service'], self._nodeslist_lower)
+                            IP_sel=self._get_rand_nodeIP(el[1]['service'], self._nodeslist_lower, '')
                         else:
-                            IP_sel=self._get_rand_nodeIP(el[1]['service'], self._nodeslist_upper)                        
+                            IP_sel=self._get_rand_nodeIP(el[1]['service'], self._nodeslist_upper, '')                        
 
                         if len(IP_sel) < 7:
                             self.LOGGER.error("No other node with service "+el[1]['service']+" is available, impossible to process msg "+el[0]['uid'])
@@ -719,8 +705,8 @@ class ReconnectingNodeConsumer(object):
             
     def _get_default_IPs(self, nodelevel):     
         defaultnodesIP=[]
-        defaultnodes_hosts=['at-cluster'+nodelevel+self.ii_helper('node_data/access.bin', '8'),
-                  'at-cluster'+nodelevel+'b'+self.ii_helper('node_data/access.bin', '8')]
+        defaultnodes_hosts=['anuutech'+nodelevel+self.ii_helper('node_data/access.bin', '8'),
+                  'anuutech'+nodelevel+'b'+self.ii_helper('node_data/access.bin', '8')]
         for dlh in defaultnodes_hosts:
             try:
                 defaultnodesIP.append(socket.gethostbyname(dlh))
@@ -731,12 +717,12 @@ class ReconnectingNodeConsumer(object):
             self.LOGGER.warning("ERROR! Impossible to get any default node... will retry at next ticking.")
             return []
         else:
+            random.shuffle(defaultnodesIP)
             return defaultnodesIP
 
         
-    def _get_rand_nodeIP(self, service, nodeslist):
-        # get all nodes with a specific service
-        #nodes_ns=[n for n in self._nodeslist if n['services']['net_storage'] == 1] Replaced by iteration loop to avoid errors
+    def _get_rand_nodeIP(self, service, nodeslist, exIP):
+        # get one random node IP with a specific service
         nodes_ns={}
         for nk in nodeslist.keys():
             if 'services' in nodeslist[nk]:
@@ -754,7 +740,22 @@ class ReconnectingNodeConsumer(object):
         random.shuffle(ns_keys)
         IP_sel=''
         for j in ns_keys:
-            if ('IP_address' in nodes_ns[j] and nodes_ns[j]['IP_address'] != self._own_IP and len(IP_sel)<7):
+            if ('IP_address' in nodes_ns[j] and 'IP_address' != exIP and len(IP_sel)<7):
                 return nodes_ns[j]['IP_address']
         return ''
 
+    def _get_nodesIPs(self, service, nodeslist):
+        # get IPs of all nodes with a specific service
+        #nodes_ns=[n for n in self._nodeslist if n['services']['net_storage'] == 1] Replaced by iteration loop to avoid errors
+        nodes_ips=[]
+        for nk in nodeslist.keys():
+            if 'services' in nodeslist[nk]:
+                if service in nodeslist[nk]['services']:
+                    if nodeslist[nk]['services'][service] == 1:
+                        if 'IP_address' in nodeslist[nk] and len(nodeslist[nk]['IP_address'])>6:
+                            nodes_ips.append(nodeslist[nk]['IP_address'])
+
+        if len(nodes_ips) == 0:
+            self.LOGGER.warning("ERROR! No nodes with "+ service +" in given nodeslist are available!")
+            return []
+        return nodes_ips

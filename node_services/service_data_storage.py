@@ -1,5 +1,6 @@
 #import class_service
-from service_class import ReconnectingNodeConsumer 
+from service_class import ReconnectingNodeConsumer
+import settings as S
 import sys
 import os
 import json
@@ -10,16 +11,14 @@ import time
 import random
 
 class ServiceRunning(ReconnectingNodeConsumer):
-    DATA_STORAGE_PATH='node_data/data_storage/files/'
-    MIN_NUMBER_OF_REPLICA=2
     _all_files={} # node_uid with corresponding list of files(hashes)
 
     def _initnode(self):
         super()._initnode()
 
         #Ensure data storage directory exists
-        if not os.path.exists(self.DATA_STORAGE_PATH):
-            os.makedirs(self.DATA_STORAGE_PATH)
+        if not os.path.exists(S.DATA_STORAGE_PATH):
+            os.makedirs(S.DATA_STORAGE_PATH)
 
         self.LOGGER.info("INITALISATION data storage service done")
  
@@ -27,10 +26,10 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
         if (msg.get('type')=='SAVE_DATA' or msg.get('type')=='SAVE_DATA_REPLICATE'): #and hdrs.get('dest_uid') == self._uid):
             # Hash file content
-            file_hash=binascii.hexlify((SHA256.new(msg['content'].encode())).digest()).decode()
+            file_hash=binascii.hexlify((SHA256.new(json.dumps(msg['content']).encode())).digest()).decode()
 
             # Save file locally using hash as filename
-            data_path=self.DATA_STORAGE_PATH+str(file_hash)
+            data_path=S.DATA_STORAGE_PATH+str(file_hash)
             with open(data_path, 'w') as data_file:
                 data_file.write(json.dumps(msg['content']))
 
@@ -45,7 +44,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
             msgback['uid']=msg['uid'] #keeps the same id so that the client knows which file it was
             msgback['type']='DATA_SAVED'
             msgback['content']=file_hash
-            self.LOGGER.info("Data storage sends back confirmation msg "+str(msgback['uid'])+" " +str(hdrs))
+            self.LOGGER.info("Data storage sends back confirmation msg "+str(msgback['uid'])+" " +str(hdrs_cli))
             self._msgs_to_send.append([msgback, hdrs_cli, hdrs_cli['dest_IP'], 'L3'])
 
 
@@ -53,7 +52,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 # Send file to other nodes, up to min number of replica
                 msg['type']='SAVE_DATA_REPLICATE'
                 # Get nodes with corresponding service
-                nodes_cs=[]
+                nodes_cs={}
                 for nk in self._nodeslist.keys():
                     if 'services' in self._nodeslist[nk]:
                         if 'data_storage' in self._nodeslist[nk]['services']:
@@ -66,8 +65,8 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 else:
                     sent=0
                     for ns_key in ns_keys: 
-                        if 'IP_address' in nodes_cs[ns_key] and sent < self.MIN_NUMBER_OF_REPLICA-1:
-                                if nodes_cs[ns_key]['uid'] != self._uid:
+                        if 'IP_address' in nodes_cs[ns_key] and sent < S.MIN_NUMBER_OF_DATA_REPLICA-1:
+                                if ns_key != self._uid:
                                     self._msgs_to_send.append([msg, hdrs, nodes_cs[ns_key]['IP_address'], self._nodelevel])
                                     sent=sent+1
                                     self.LOGGER.info("msg "+msg['uid']+" forwarded to node with data storage service on node "+nodes_cs[ns_key]['IP_address'])
@@ -78,11 +77,11 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
         if (msg.get('type')=='GET_DATA'):
             # Check if Data are stored locally file content
-            listoffiles = next(os.walk(self.DATA_STORAGE_PATH), (None, None, []))[2]
+            listoffiles = next(os.walk(S.DATA_STORAGE_PATH), (None, None, []))[2]
             self.LOGGER.debug("Msg content is: "+str(msg['content']))
             if msg['content'] in listoffiles:
                 # Read it
-                with open(self.DATA_STORAGE_PATH+str(msg['content']), 'r') as filedata:
+                with open(S.DATA_STORAGE_PATH+str(msg['content']), 'r') as filedata:
                     msg['content']=json.load(filedata)
                 # Send it back to client
                 self._sends_back(msg, hdrs,'DATA_LOADED')
@@ -132,7 +131,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
     def _share_saved_files(self):
         # Update all known files
-        listoffiles = next(os.walk(self.DATA_STORAGE_PATH), (None, None, []))[2]
+        listoffiles = next(os.walk(S.DATA_STORAGE_PATH), (None, None, []))[2]
         
         # prepare the msg to be sent
         headers=self._initheaders()
@@ -167,15 +166,13 @@ class ServiceRunning(ReconnectingNodeConsumer):
 def main():
 
     # Check arguments
-    if len(sys.argv) == 2:
-        if sys.argv[1] == 'L1' or sys.argv[1] == 'L2' or sys.argv[1] == 'L3' :
+    if len(sys.argv) == 2 and sys.argv[1] == 'L2':
             nodelevel=sys.argv[1]
-
             # Create Instance and start the service
             consumer = ServiceRunning(nodelevel, 'data_storage')
             consumer.run()
     else:
-        print("Script needs 1 parameter (L1, L2 or L3). Please retry.")
+        print("The 'data_storage' service only works on L2.")
         exit()
         
 if __name__ == '__main__':

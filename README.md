@@ -4,14 +4,14 @@ Initial network solution using RabbitMQ as message protocol.
 
 ### CLIENT SIDE / TESTING THE NETWORK FEATURES
 You can test the different features of the network using the client_basic.py python application.
-1. Type "Python3 client_basic.py" in a command line where the file is present
-3. Select the message type you want to test, the node to connect to and then click "Connect"
-4. For the Chat feature, click "Send msg", to send a broadcast message
-6. Alternatively fill the AnuuChat recipient field with the unique identifier of another client to send an encrypted private message
-8. For PoH, click send msg and wait for a confirmation message
-9. For Data Storage, select a file to store in the network, click connect and then "Send msg"
-10. To retrieve a file, fill in with a hash that has been stored and clicking "Send msg" will retrieve the file with the corresponding hash.
-12. Click "Disconnect" and then "QUIT"
+1. Type "python3 client_basic.py" in a command line where the file is present
+2. Select the message type you want to test, the node to connect to and then click "Connect"
+3. For the Chat feature, click "Send msg", to send a broadcast message
+4. Alternatively fill the AnuuChat recipient field with the unique identifier of another client to send an encrypted private message
+5. For PoH, click send msg and wait for a confirmation message
+6. For Data Storage, select a file to store in the network, click connect and then "Send msg"
+7. To retrieve a file, fill in with a hash that has been stored and clicking "Send msg" will retrieve the file with the corresponding hash.
+8. Click "Disconnect" and then "QUIT"
 
 
 ### CLIENT SIDE / STRESS TESTING

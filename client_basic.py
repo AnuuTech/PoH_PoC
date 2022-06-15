@@ -23,7 +23,7 @@ import urllib
 import signal
 signal.signal(signal.SIGINT, signal.default_int_handler) # to ensure Signal to be received
 
-Title="AnuuTech Basic client V-0.2.0beta"
+Title="AnuuTech Basic client V-0.2.0"
 
 #helper function
 def ii_helper(fily, sel):
@@ -116,8 +116,8 @@ else:
 PRK=PKCS1_OAEP.new(private_key)
 
 #get default L3nodes
-defaultL3nodes_hosts=['at-clusterL3'+ii_helper('node_data/access.bin', '8'),
-                      'at-clusterL3b'+ii_helper('node_data/access.bin', '8')]
+defaultL3nodes_hosts=['anuutechL3'+ii_helper('node_data/access.bin', '8'),
+                      'anuutechL3b'+ii_helper('node_data/access.bin', '8')]
 for dgh in defaultL3nodes_hosts:
     try:
         defaultL3nodes.append(socket.gethostbyname(dgh))
@@ -369,20 +369,12 @@ def openFile():
 
 def readDB():
     global connected, tx_sent
-    db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+defaultL3nodes[0]+':27017/?authMechanism=DEFAULT&authSource=admin'
+    db_url='mongodb://explorer:' + urllib.parse.quote(db_pass) +'@'+defaultL3nodes[0]+':28991/?authMechanism=DEFAULT&authSource=admin'
     with pymongo.MongoClient(db_url) as db_client:
-        at_db = db_client['AnuuTechDB']
+        at_db = db_client['AnuuTech_DB']
         while connected:
             LOGGER.debug("DB checking "+str(len(tx_sent)))
             if (int(varGr.get()) == 3):
-                col = at_db['transactions_pending']
-                #tx_sent[msg['uid']]={'hash': msg['content']['tx_hash'], 'verified':0}
-                for txid in tx_sent.keys():
-                    db_query = { 'uid': txid }
-                    if (col.count_documents(db_query)>0) and tx_sent[txid]['verified']==0:
-                        tx_sent[txid]['verified']=1
-                        mlist.insert(0,"Msg "+str(txid)+ " has been validated by 3 nodes of the network...")
-                        LOGGER.info("Msg "+str(txid)+ " has been validated by 3 nodes of the network...")
                 col = at_db['blocks']
                 resl=col.find_one(sort=[("height", -1)])
                 tx_s=tx_sent.copy()
@@ -565,9 +557,9 @@ def msgconsumer(ch, method, properties, body):
                 mlist.insert(0,"Data storage: A new file has been sucessfully stored on: "+hdrs['sender_uid'])
 
     elif (msg.get('type')=='DATA_LOADED' and hdrs.get('dest_uid')==client_uid):
-        fileloaded=msg['content']
+        fileloaded=msg['content']['file']
         mlist.insert(0,"Data storage: file retrieved from: "+hdrs['sender_uid'])
-        with open (pathh.get()+".RETRIEVED", 'wb') as h_file:
+        with open ("RETRIEVED_"+msg['content']['filename'], 'wb') as h_file:
             h_file.write(base64.b64decode(fileloaded))
 
     elif (msg.get('type')=='DATA_NOT_FOUND' and hdrs.get('dest_uid')==client_uid):
@@ -647,7 +639,8 @@ def prepare_msg():
         elif int(varGr.get()) == 4:
             msgtype=4
             headers=initheaders()
-            headers['service']='data_storage'
+            headers['service']='net_maintenance'
+            headers['service_forward']='data_storage'
             if len(pathh.get())<2 and len(hashh.get())<10:
                 mlist.insert(0,"No file selected!")
                 return
@@ -723,6 +716,7 @@ def initheaders():
         'dest_IP': '',
         'dest_all': '',
         'service': '',
+        'service_forward': '',
         'retry': 0
         }
     return basic_headers
@@ -738,9 +732,9 @@ def getL3nodesList():
             random.shuffle(defaultL3nodes)
             IP_sel=defaultL3nodes[0]
             # get all infos from DB
-            db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
+            db_url='mongodb://explorer:' + urllib.parse.quote(db_pass) +'@'+IP_sel+':28991/?authMechanism=DEFAULT&authSource=admin'
             db_client = pymongo.MongoClient(db_url)
-            at_db = db_client['AnuuTechDB']
+            at_db = db_client['AnuuTech_DB']
             nodes_col = at_db['nodes']
             db_query = { 'level': 'L3'}
             db_filter = {'uid':1, 'IP_address':1, '_id':0, 'services':1}

@@ -108,35 +108,36 @@ sleep 5
 ## mongod --version
 
 ## Create JS file for adding user and rights NOT NEEDED
-# key=$((python3 ii_helper.py node_data/access.bin 12) 2>&1)
-# rm installMongoScript.js
-# cat >>installMongoScript.js <<EOF
-# use admin
-# db.createUser(
-  # {
-    # user: "admin",
-    # pwd: "$key", // or cleartext password
-    # roles: [ { role: "userAdminAnyDatabase", db: "admin" }, "readWriteAnyDatabase" ]
-  # }
-# )
-# db.grantRolesToUser(
-    # "admin",
-    # [
-      # { role: "clusterAdmin", db: "admin" }
-    # ]
-# )
-# exit
-# EOF
-# mongo installMongoScript.js
+key=$((python3 ii_helper.py node_data/access.bin 11) 2>&1)
+key2=$((python3 ii_helper.py node_data/access.bin 12) 2>&1)
+rm installMongoScript.js
+cat >>installMongoScript.js <<EOF
+db.getSiblingDB("admin").createUser(
+  {
+    user: "admin",
+    pwd: "$key", // or cleartext password
+    roles: [ { role: "userAdminAnyDatabase", db: "admin" }, "readWriteAnyDatabase" ]
+  }
+)
+db.getSiblingDB("admin").createUser(
+  {
+    user: "explorer",
+    pwd: "$key2", // or cleartext password
+    roles: [{role:"read", db: "AnuuTech_DB"}]
+  }
+)
 
-## Create mongo security directory and move keyfile
-mkdir mongo-security
-mv node_data/keyfile.txt mongo-security/
+EOF
+mongo installMongoScript.js
 
-## Change file permissions and owner
-cd mongo-security
-chmod 400 keyfile.txt
-chown mongodb:mongodb keyfile.txt
+# ## Create mongo security directory and move keyfile
+# mkdir mongo-security
+# mv node_data/keyfile.txt mongo-security/
+
+# ## Change file permissions and owner
+# cd mongo-security
+# chmod 400 keyfile.txt
+# chown mongodb:mongodb keyfile.txt
 
 ## Overwrite mongo config file
 own_ip=$(curl -s https://api.ipify.org) # get own external IP
@@ -159,7 +160,7 @@ systemLog:
 
 # network interfaces
 net:
-  port: 27017
+  port: 28991
   bindIp: 127.0.0.1, $own_ip
 
 # how the process runs
@@ -168,18 +169,11 @@ processManagement:
 
 security:
   authorization: enabled
-  keyFile: /home/mongo-security/keyfile.txt
-  transitionToAuth: true
-
-#operationProfiling:
-
-replication:
-  replSetName: "AnuuTech"
 
 EOF
 
 ## Open firewall
-ufw allow 27017
+ufw allow 28991
 
 ## Restart service and ready
 systemctl restart mongod

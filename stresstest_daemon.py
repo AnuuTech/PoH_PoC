@@ -1,3 +1,4 @@
+# launched with python3 -u stresstest_daemon.py 3 0 &>output_stress.log </dev/null &
 import pika
 import time
 import threading
@@ -21,7 +22,6 @@ IP_sel=[]
 sending=False
 consuming=False
 threads=[]
-msgs_tosend=[]
 lay_pass=''
 
 #helper functions
@@ -54,8 +54,8 @@ if len(sys.argv) == 2:
         defaultL3nodes.append('192.168.1.71')
 
 #get default L3nodes
-defaultL3nodes_hosts=['at-clusterL3'+ii_helper('node_data/access.bin', '8'),
-                      'at-clusterL3b'+ii_helper('node_data/access.bin', '8')]
+defaultL3nodes_hosts=['anuutechL3'+ii_helper('node_data/access.bin', '8'),
+                      'anuutechL3b'+ii_helper('node_data/access.bin', '8')]
 for dgh in defaultL3nodes_hosts:
     try:
         defaultL3nodes.append(socket.gethostbyname(dgh))
@@ -136,23 +136,16 @@ def msgconsumer(ch, method, properties, body):
     elif (msg.get('type')=='DATA_LOADED' and hdrs.get('dest_uid')==client_uid):
         print("File has been retrieved: "+msg['uid'])
     elif (msg.get('type')=='POH_L3_R1_DONE' and hdrs.get('dest_uid')==client_uid):
-        print("POH back" + msg['uid'])
-        #send to a second node
-        node_uid2=list(nodeslist_poh.keys())[(sum(msg['content']['fingerprintL3'].encode()))%len(nodeslist_poh.keys())]
-        headers=initheaders()
-        headers['service']='poh'
-        headers['dest_uid']=node_uid2
-        msg['type']='POH_L3_R2'
-        msgs_tosend.append([headers, msg])  
+        print("POH back" + msg['uid']) 
     ch.basic_ack(delivery_tag = method.delivery_tag)
     
 def sending_msg():
     global connection, channel2, connection2, sending, IP_sel, msg_per_sec
     
     # get node uid from DB
-    db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+defaultL3nodes[0]+':27017/?authMechanism=DEFAULT&authSource=admin'
+    db_url='mongodb://explorer:' + urllib.parse.quote(db_pass) +'@'+defaultL3nodes[0]+':28991/'
     db_client = pymongo.MongoClient(db_url)
-    at_db = db_client['AnuuTechDB']
+    at_db = db_client['AnuuTech_DB']
     nodes_col = at_db['nodes']
     db_query = { 'IP_address': IP_sel}
     db_filter = {'uid':1, '_id':0}
@@ -195,19 +188,13 @@ def sending_msg():
                 print("msg sent: PoH " + msg['uid'])
 
             else:
-                headers['service']='data_storage'
+                headers['service']='net_maintenance'
+                headers['service_forward']='data_storage'
                 msg['type']='GET_DATA'
-                msg['content']= '188071675d5b19b30a49bfe5c2d776cc716a4cad2855ad7feadf02f7841e4069'
+                msg['content']= '2efae2f564b0f192352cad7ffb1dd3e5fcf74f49e976851b52cc2f19ac3f25f0'
                 channel2.basic_publish(exchange='L3_main_exchange', routing_key='all',
                                        properties=pika.BasicProperties(headers=headers), body=(json.dumps(msg)))
                 print("msg sent: Data Storage " + msg['uid'])
-
-                
-            while len(msgs_tosend)>0:
-                headers2, msg2=msgs_tosend.pop()
-                channel2.basic_publish(exchange='L3_main_exchange', routing_key='all',
-                                       properties=pika.BasicProperties(headers=headers2), body=(json.dumps(msg2)))
-                print("   (msg sent: PoH--2 " + msg2['uid']+")")
 
             i=i+1
             time.sleep(1/msg_per_sec)
@@ -235,9 +222,9 @@ def getL3nodesList():
             random.shuffle(defaultL3nodes)
             IP_sel=defaultL3nodes[0]
             # get all infos from DB
-            db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_sel+':27017/?authMechanism=DEFAULT&authSource=admin'
+            db_url='mongodb://explorer:' + urllib.parse.quote(db_pass) +'@'+IP_sel+':28991/'
             db_client = pymongo.MongoClient(db_url)
-            at_db = db_client['AnuuTechDB']
+            at_db = db_client['AnuuTech_DB']
             nodes_col = at_db['nodes']
             db_query = { 'level': 'L3'}
             db_filter = {'uid':1, 'IP_address':1, '_id':0, 'services':1}
@@ -248,7 +235,7 @@ def getL3nodesList():
         except:
             time.sleep(1)
             e = sys.exc_info()[1]
-            LOGGER.info( "<p>Error while trying to get nodes from DB, retrying...: %s</p>" % e )
+            print( "<p>Error while trying to get nodes from DB, retrying...: %s</p>" % e )
 
 
 def cleanall():
