@@ -374,6 +374,9 @@ class ServiceRunning(ReconnectingNodeConsumer):
                     self._signature_verif(tx['tx_hash'], tx['fingerprintL3'], tx['fingerprintL2'], tx['signer_nodeL2']) and
                     self._signature_verif(tx['tx_hash'], tx['fingerprintL2'], tx['fingerprintL1'], tx['signer_nodeL1'])):
                     txs_valid.append(tx)
+            else:
+                self._txs_to_validate.append(tx)
+                self.LOGGER.info(str(tx)+  " is from the next epoch, readded for next one!")
         self.LOGGER.info(str(len(txs_valid))+" txs have been validated.")
         
         # create new block hash

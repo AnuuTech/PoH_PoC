@@ -431,7 +431,7 @@ def keepconnection():
         except KeyboardInterrupt:
             connected=False
             break
-        except FileNotFoundError:
+        except:
             e = sys.exc_info()[1]
             logmsg=( "<p>WARNING! Unidentified error, trying to reinit...: %s</p>" % e )
             LOGGER.info(logmsg)
