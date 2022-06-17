@@ -10,9 +10,9 @@ import time
 import random
 import urllib
 import pymongo
+from filelock import FileLock
 
 class ServiceRunning(ReconnectingNodeConsumer):
-    _last_block_hash_stored=''
     _last_block_height_stored=0
 
     def _initnode(self):
@@ -50,11 +50,12 @@ class ServiceRunning(ReconnectingNodeConsumer):
             b_hash=binascii.hexlify(hh.digest()).decode()#compute final hash
             
             if b_hash == msg['content']['current_hash']:
-                if self._last_block_hash_stored != msg['content']['current_hash']:
+                if msg['content']['height'] > self._last_block_height_stored:
                     # Save file locally using height as filename
                     data_path=S.NET_STORAGE_PATH+str(msg['content']['height'])
-                    with open(data_path, 'w') as data_file:
-                        data_file.write(json.dumps(msg['content']))
+                    with FileLock(data_path+'.lock', timeout=1):
+                        with open(data_path, 'w') as data_file:
+                            data_file.write(json.dumps(msg['content']))
                     # Write to DB if new block
                     if msg.get('type')=='SAVE_BLOCK':
                         db_query = { 'height': msg['content']['height'] }
@@ -64,7 +65,6 @@ class ServiceRunning(ReconnectingNodeConsumer):
                                                    'epoch' : msg['content']['epoch'],
                                                    'transactions': msg['content']['transactions']}}
                         self._updateDB('blocks', db_query, db_values_toset, False)
-                        self._last_block_hash_stored = msg['content']['current_hash']
                         self._last_block_height_stored = msg['content']['height']
                         self.LOGGER.info("New block " +str(msg['content']['height'])+" is valid and has been stored locally and on DB.")
                     else:
@@ -78,8 +78,9 @@ class ServiceRunning(ReconnectingNodeConsumer):
             self.LOGGER.debug("Msg content is: "+str(msg['content']))
             if str(msg['content']) in listofblocks:
                 # Read it
-                with open(S.NET_STORAGE_PATH+str(msg['content']), 'r') as filedata:
-                    msg['content']=json.load(filedata)
+                with FileLock(S.NET_STORAGE_PATH+str(msg['content'])+'.lock', timeout=1):
+                    with open(S.NET_STORAGE_PATH+str(msg['content']), 'r') as filedata:
+                        msg['content']=json.load(filedata)
                 # Send it back to client
                 self._sends_back(msg, hdrs,'BLOCK_BACK')
             elif msg.get('trials') is None or msg.get('trials') < 3: # 'or' is lazy

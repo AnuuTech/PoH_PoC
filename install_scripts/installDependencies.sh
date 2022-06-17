@@ -91,6 +91,7 @@ pip3 install requests
 pip3 install pycryptodome
 pip3 install pymongo
 pip3 install psutil
+pip3 install filelock
 
 
 ## INSTALL MONGODB V5

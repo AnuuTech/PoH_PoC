@@ -454,12 +454,12 @@ def msgconsumer(ch, method, properties, body):
             decrypted_msg = json.loads(PRK.decrypt(base64.b64decode(msg['content'].encode())).decode())
             xm="AnuuChat: Private encrypted message received from "+str(decrypted_msg.get('username'))+ ': "' + str(decrypted_msg.get('chat_msg'))+'"'
             mlist.insert(0,str(xm))
-        elif hdrs.get('sender_uid').strip() != client_uid.strip():
+        elif hdrs.get('sender_uid').strip() != client_uid.strip() and int(varGr.get()) == 0: # to avoid receiving general messages while using other services
             #General message
             xm="AnuuChat: General message received from "+str(msg['content'].get('username'))+ ': "' + str(msg['content'].get('chat_msg'))+'"'
             mlist.insert(0,str(xm))
             
-    elif msg.get('type')=='CHAT-PUK':
+    elif msg.get('type')=='CHAT-PUK' and hdrs.get('dest_uid')==client_uid:
         xm="AnuuChat: Encryption request from "+str(msg['content'].get('username'))
         mlist.insert(0,str(xm))
         if hdrs.get('sender_uid') is not None and msg['content'].get('pubk') is not None:

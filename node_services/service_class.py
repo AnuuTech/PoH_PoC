@@ -16,6 +16,7 @@ from Crypto.PublicKey import RSA
 from threading import Timer, Thread
 from collections import Counter
 import traceback
+from filelock import FileLock
 import signal
 signal.signal(signal.SIGINT, signal.default_int_handler) # to ensure Signal to be received
 
@@ -337,7 +338,7 @@ class ReconnectingNodeConsumer(object):
         self._nodelevel = str(xargs)
         self._service = str(yargs)
         self._nodeservices ={}
-        self._service_stats_path='node_data/'+self._service+'_stat.file'
+        self._service_stats_path=S.SERVICES_STATS_PATH+self._service+S.SERVICES_STATS_PATHEND
         self._service_stats={}
         self._node_user='layer_local'
         self._np='pass_'
@@ -442,23 +443,27 @@ class ReconnectingNodeConsumer(object):
     def _initnode(self):
         #IP from file
         if os.path.isfile(S.IP_PATH):
-            with open(S.IP_PATH, 'r') as ip_file:
-                self._own_IP=ip_file.read().strip()
+            with FileLock(S.IP_PATH+'.lock', timeout=1):
+                with open(S.IP_PATH, 'r') as ip_file:
+                    self._own_IP=ip_file.read().strip()
 
         #nodeslist read from file
         if os.path.isfile(S.NODESLIST_PATH):
-            with open(S.NODESLIST_PATH, 'r') as nodes_file:
-                self._nodeslist=json.load(nodes_file)
+            with FileLock(S.NODESLIST_PATH+'.lock', timeout=1):
+                with open(S.NODESLIST_PATH, 'r') as nodes_file:
+                    self._nodeslist=json.load(nodes_file)
 
         #lower nodeslist read from file
         if os.path.isfile(S.NODESLIST_LOWER_PATH):
-            with open(S.NODESLIST_LOWER_PATH, 'r') as nodes_file:
-                self._nodeslist_lower=json.load(nodes_file) 
+            with FileLock(S.NODESLIST_LOWER_PATH+'.lock', timeout=1):
+                with open(S.NODESLIST_LOWER_PATH, 'r') as nodes_file:
+                    self._nodeslist_lower=json.load(nodes_file) 
 
         #upper nodeslist read from file
         if os.path.isfile(S.NODESLIST_UPPER_PATH):
-            with open(S.NODESLIST_UPPER_PATH, 'r') as nodes_file:
-                self._nodeslist_upper=json.load(nodes_file) 
+            with FileLock(S.NODESLIST_UPPER_PATH+'.lock', timeout=1):
+                with open(S.NODESLIST_UPPER_PATH, 'r') as nodes_file:
+                    self._nodeslist_upper=json.load(nodes_file) 
 
         # Create service queue
         try:
@@ -480,8 +485,9 @@ class ReconnectingNodeConsumer(object):
 
         # Service stats updated from file
         if os.path.isfile(self._service_stats_path):
-            with open(self._service_stats_path, 'r') as stat_file:
-                self._service_stats=json.load(stat_file)
+            with FileLock(self._service_stats_path+'.lock', timeout=1):
+                with open(self._service_stats_path, 'r') as stat_file:
+                    self._service_stats=json.load(stat_file)
 
         logmsg=("INITIALISATION of "+self._uid+" done, IP: " + self._own_IP+
                 " number of layer nodes: "+str(len(self._nodeslist)))
@@ -497,28 +503,37 @@ class ReconnectingNodeConsumer(object):
 
     def _ticking(self):
         if not self._first_init:
-            self._ticking_actions()
+            try:
+                self._ticking_actions()
+            except:
+                e = sys.exc_info()
+                logmsg=str("<p>Problem while ticking: %s</p>" % str(traceback.format_exc()) )
+                self.LOGGER.error(logmsg)
         self._first_init = False
-
+        
         t = Timer(self._node_tick_interval, self._ticking)
         t.daemon=True
         t.start()
 
-    def _ticking_actions(self):
-        #nodeslist updated from file
-        if os.path.isfile(S.NODESLIST_PATH):
-            with open(S.NODESLIST_PATH, 'r') as nodes_file:
-                self._nodeslist=json.load(nodes_file)
 
-        #lower nodeslist updated from file
+    def _ticking_actions(self):
+        #nodeslist read from file
+        if os.path.isfile(S.NODESLIST_PATH):
+            with FileLock(S.NODESLIST_PATH+'.lock', timeout=1):
+                with open(S.NODESLIST_PATH, 'r') as nodes_file:
+                    self._nodeslist=json.load(nodes_file)
+
+        #lower nodeslist read from file
         if os.path.isfile(S.NODESLIST_LOWER_PATH):
-            with open(S.NODESLIST_LOWER_PATH, 'r') as nodes_file:
-                self._nodeslist_lower=json.load(nodes_file)
+            with FileLock(S.NODESLIST_LOWER_PATH+'.lock', timeout=1):
+                with open(S.NODESLIST_LOWER_PATH, 'r') as nodes_file:
+                    self._nodeslist_lower=json.load(nodes_file) 
 
         #upper nodeslist read from file
         if os.path.isfile(S.NODESLIST_UPPER_PATH):
-            with open(S.NODESLIST_UPPER_PATH, 'r') as nodes_file:
-                self._nodeslist_upper=json.load(nodes_file)
+            with FileLock(S.NODESLIST_UPPER_PATH+'.lock', timeout=1):
+                with open(S.NODESLIST_UPPER_PATH, 'r') as nodes_file:
+                    self._nodeslist_upper=json.load(nodes_file)
 
         #update and save service stats
         self._stats_update()
@@ -533,8 +548,9 @@ class ReconnectingNodeConsumer(object):
         if self._uid in self._nodeslist:
             self._nodeslist[self._uid]['service_'+self._service]={'nb_of_msg_processed': tot}
         #write service stats to file
-        with open(self._service_stats_path, 'w') as stat_file:
-            stat_file.write(json.dumps(self._service_stats))
+        with FileLock(self._service_stats_path+'.lock', timeout=1):
+            with open(self._service_stats_path, 'w') as stat_file:
+                stat_file.write(json.dumps(self._service_stats))
         self.LOGGER.debug("Stat information updated: "+str(tot))
 
     # Consumer method

@@ -10,6 +10,7 @@ import requests
 import json
 import pika
 import threading
+from filelock import FileLock
 
 class ServiceRunning(ReconnectingNodeConsumer):
     
@@ -69,12 +70,15 @@ class ServiceRunning(ReconnectingNodeConsumer):
         self._check_IP()
         
         #write nodeslists into files
-        with open(S.NODESLIST_PATH, 'w') as nodes_file:
-            nodes_file.write(json.dumps(self._nodeslist))
-        with open(S.NODESLIST_LOWER_PATH, 'w') as nodes_file:
-            nodes_file.write(json.dumps(self._nodeslist_lower))
-        with open(S.NODESLIST_UPPER_PATH, 'w') as nodes_file:
-            nodes_file.write(json.dumps(self._nodeslist_upper))
+        with FileLock(S.NODESLIST_PATH+'.lock', timeout=1):
+            with open(S.NODESLIST_PATH, 'w') as nodes_file:
+                nodes_file.write(json.dumps(self._nodeslist))
+        with FileLock(S.NODESLIST_LOWER_PATH+'.lock', timeout=1):
+            with open(S.NODESLIST_LOWER_PATH, 'w') as nodes_file:
+                nodes_file.write(json.dumps(self._nodeslist_lower))
+        with FileLock(S.NODESLIST_UPPER_PATH+'.lock', timeout=1):
+            with open(S.NODESLIST_UPPER_PATH, 'w') as nodes_file:
+                nodes_file.write(json.dumps(self._nodeslist_upper))
 
         # Ensure exchange is working
         self._exchange_check()
@@ -97,8 +101,9 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 self.LOGGER.info("WARNING! Impossible to identme: " + str(sys.exc_info()[0]))
         if len(own_ip)>6:
             self._own_IP=own_ip
-            with open(S.IP_PATH, 'w') as ip_file:
-                ip_file.write(self._own_IP)
+            with FileLock(S.IP_PATH+'.lock', timeout=1):
+                with open(S.IP_PATH, 'w') as ip_file:
+                    ip_file.write(self._own_IP)
                 self.LOGGER.info("IP determined as being: "+self._own_IP)
         else:
             self.LOGGER.warning("WARNING! Impossible to get own IP")
@@ -225,10 +230,11 @@ class ServiceRunning(ReconnectingNodeConsumer):
         for ser in self._nodeservices.keys():
             if self._nodeservices[ser] == 1:
                 # Service stats loaded from file
-                path_ser='node_data/'+ser+'_stat.file'
-                if os.path.isfile(path_ser):
-                    with open(path_ser, 'r') as stat_file:
-                        stats=json.load(stat_file)
+                service_stats_path=S.SERVICES_STATS_PATH+ser+S.SERVICES_STATS_PATHEND
+                if os.path.isfile(service_stats_path):
+                    with FileLock(service_stats_path+'.lock', timeout=1):
+                        with open(service_stats_path, 'r') as stat_file:
+                            stats=json.load(stat_file)
                     tot=0
                     for st in stats.keys():
                         tot=tot+stats[st]
