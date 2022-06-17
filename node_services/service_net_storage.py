@@ -146,11 +146,12 @@ class ServiceRunning(ReconnectingNodeConsumer):
         self.LOGGER.info("Nodes info updated on DB.")
 
     def _check_blocks_storage(self):
-        listofblocks = next(os.walk(S.NET_STORAGE_PATH), (None, None, []))[2]
+        listofblocks_str = next(os.walk(S.NET_STORAGE_PATH), (None, None, []))[2]
+        listofblocks=[int(os.path.splitext(x)[0]) for x in listofblocks_str]
         listofblocks.sort()
-        allnbs=list(range(0,int(listofblocks[-1])))
+        allnbs=list(range(0,listofblocks[-1]))
         for b in allnbs:
-            if str(b) not in listofblocks:
+            if str(b) not in listofblocks_str:
                 # Request block to another L2 node
                 # prepare the msg to be sent
                 headers=self._initheaders()

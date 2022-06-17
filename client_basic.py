@@ -38,8 +38,8 @@ def ii_helper(fily, sel):
     return null
 
 lay_user='client_user'
-lay_pass=ii_helper('node_data/access.bin', '1')
-db_pass=ii_helper('node_data/access.bin', '12')
+lay_pass=ii_helper('node_data/accessClient.bin', '0')
+db_pass=ii_helper('node_data/accessClient.bin', '1')
 nodeslist={} # UIDs and IPs of all nodes with chat service
 defaultL3nodes=[]
 port=5672
@@ -116,8 +116,8 @@ else:
 PRK=PKCS1_OAEP.new(private_key)
 
 #get default L3nodes
-defaultL3nodes_hosts=['anuutechL3'+ii_helper('node_data/access.bin', '8'),
-                      'anuutechL3b'+ii_helper('node_data/access.bin', '8')]
+defaultL3nodes_hosts=['anuutechL3'+ii_helper('node_data/accessClient.bin', '2'),
+                      'anuutechL3b'+ii_helper('node_data/accessClient.bin', '2')]
 for dgh in defaultL3nodes_hosts:
     try:
         defaultL3nodes.append(socket.gethostbyname(dgh))
@@ -446,7 +446,7 @@ def msgconsumer(ch, method, properties, body):
     msg= json.loads(body.decode('utf-8'))
     LOGGER.info(msg)
     if msg.get('type')=='CHAT':
-        LOGGER.info("AnuuChat Received " + msg['uid'])
+        #LOGGER.info("AnuuChat Received " + msg['uid'])
         if hdrs.get('sender_uid')==client_uid and hdrs.get('dest_all')=='clients':
             mlist.insert(0,'AnuuChat: Own general message received back: "' + str(msg['content'].get('chat_msg'))+'"')
         elif hdrs.get('dest_uid')==client_uid:
