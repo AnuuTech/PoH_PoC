@@ -176,6 +176,10 @@ EOF
 ## Open firewall
 ufw allow 28991
 
+## Increase open file limit to avoid can't create new threads error:
+## https://www.mongodb.com/docs/manual/reference/ulimit/
+ulimit -n 65536
+
 ## Restart service and ready
 systemctl restart mongod
 sleep 5

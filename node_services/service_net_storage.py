@@ -50,7 +50,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
             b_hash=binascii.hexlify(hh.digest()).decode()#compute final hash
             
             if b_hash == msg['content']['current_hash']:
-                if msg['content']['height'] > self._last_block_height_stored:
+                if msg.get('type')=='BLOCK_BACK' or msg['content']['height'] > self._last_block_height_stored:
                     # Save file locally using height as filename
                     data_path=S.NET_STORAGE_PATH+str(msg['content']['height'])
                     with FileLock(data_path+'.lock', timeout=1):

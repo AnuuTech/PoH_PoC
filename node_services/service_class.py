@@ -16,7 +16,7 @@ from Crypto.PublicKey import RSA
 from threading import Timer, Thread
 from collections import Counter
 import traceback
-from filelock import FileLock
+from filelock import Timeout, FileLock
 import signal
 signal.signal(signal.SIGINT, signal.default_int_handler) # to ensure Signal to be received
 
@@ -505,9 +505,12 @@ class ReconnectingNodeConsumer(object):
         if not self._first_init:
             try:
                 self._ticking_actions()
+            except Timeout:
+                logmsg=str("Timeout on FileLock: %s" % str(traceback.format_exc()) )
+                self.LOGGER.warning(logmsg)
             except:
                 e = sys.exc_info()
-                logmsg=str("<p>Problem while ticking: %s</p>" % str(traceback.format_exc()) )
+                logmsg=str("<p>Exception while ticking: %s</p>" % str(traceback.format_exc()) )
                 self.LOGGER.error(logmsg)
         self._first_init = False
         
