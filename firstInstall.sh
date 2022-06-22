@@ -14,8 +14,8 @@ echo $nodelevel
 
 ## INSTALL DEPENDENCIES (ERLANG+RABBITMQ+ optionally MONGODB)
 chmod +x install_scripts/installDependencies.sh
-if [ "$3" = '1' && $nodelevel = 'L3']; then
-	./install_scripts/installDependencies.sh 'mongo'
+if [ "$3" = '1' ] && [ $nodelevel = 'L3' ]; then
+	./install_scripts/installDependencies.sh mongo
 else 
 	./install_scripts/installDependencies.sh 
 fi

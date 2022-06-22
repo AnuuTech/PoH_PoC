@@ -1,7 +1,7 @@
 # Define all global settings for python services
 
 # Global
-SW_VERSION='0.2.1'
+SW_VERSION='0.2.2beta'
 GENESIS_HASH='145120157110_AnnuTech_is_born_74312d646576' # For Genesis block
 E_TRIM=1655157600 # epoch trim (14.06.2022 00:00 in CET)
 VHOST='anuutech'

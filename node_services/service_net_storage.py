@@ -13,33 +13,34 @@ import pymongo
 from filelock import FileLock
 
 class ServiceRunning(ReconnectingNodeConsumer):
-    _last_block_height_stored=0
+    _last_block_hash_stored='0'
 
     def _initnode(self):
         super()._initnode()
 
-        #Ensure net storage directory exists
-        if not os.path.exists(S.NET_STORAGE_PATH):
-            os.makedirs(S.NET_STORAGE_PATH)
-            # Store Genesis block
-            data_path=S.NET_STORAGE_PATH+str('0')
-            blocktemp={'height': 0, 'current_hash': S.GENESIS_HASH, 'previous_hash': '', 'epoch' : 0}
-            with open(data_path, 'w') as data_file:
-                data_file.write(json.dumps(blocktemp))
-            # Create and store second block
-            hh=SHA256.new(S.GENESIS_HASH.encode())#put previous block hash
-            hh.update(str(1).encode()) # put current epoch
-            b_hash2=binascii.hexlify(hh.digest()).decode()
-            data_path=S.NET_STORAGE_PATH+str('1')
-            blocktemp={'height': 1, 'current_hash': b_hash2,
-                       'previous_hash': S.GENESIS_HASH, 'epoch' : 1}
-            with open(data_path, 'w') as data_file:
-                data_file.write(json.dumps(blocktemp))
+        #Ensure net storage directory exists on L2
+        if self._nodelevel == 'L2':
+            if not os.path.exists(S.NET_STORAGE_PATH):
+                os.makedirs(S.NET_STORAGE_PATH)
+                # Store Genesis block
+                data_path=S.NET_STORAGE_PATH+S.GENESIS_HASH
+                blocktemp={'height': 0, 'current_hash': S.GENESIS_HASH, 'previous_hash': '', 'epoch' : 0}
+                with open(data_path, 'w') as data_file:
+                    data_file.write(json.dumps(blocktemp))
+                # Create and store second block
+                hh=SHA256.new(S.GENESIS_HASH.encode())#put previous block hash
+                hh.update(str(1).encode()) # put current epoch
+                b_hash2=binascii.hexlify(hh.digest()).decode()
+                data_path=S.NET_STORAGE_PATH+b_hash2
+                blocktemp={'height': 1, 'current_hash': b_hash2,
+                           'previous_hash': S.GENESIS_HASH, 'epoch' : 1}
+                with open(data_path, 'w') as data_file:
+                    data_file.write(json.dumps(blocktemp))
         self.LOGGER.info("INITALISATION net storage service done")
  
     def _msg_process(self, msg, hdrs):
 
-        if msg.get('type')=='SAVE_BLOCK' or msg.get('type')=='BLOCK_BACK':
+        if (msg.get('type')=='SAVE_BLOCK' or msg.get('type')=='BLOCK_BACK') and self._nodelevel == 'L2':
             # Verify Hash is correct
             hh=SHA256.new(msg['content']['previous_hash'].encode())# put previous block hash
             hh.update(str(msg['content']['epoch']).encode()) # put epoch
@@ -48,31 +49,31 @@ class ServiceRunning(ReconnectingNodeConsumer):
             for tx in txs_ord:
                 hh.update(tx['fingerprintL1'].encode())#put each tx L1 fingerprint
             b_hash=binascii.hexlify(hh.digest()).decode()#compute final hash
-            
+
+            # Check hash 
             if b_hash == msg['content']['current_hash']:
-                if msg.get('type')=='BLOCK_BACK' or msg['content']['height'] > self._last_block_height_stored:
-                    # Save file locally using height as filename
-                    data_path=S.NET_STORAGE_PATH+str(msg['content']['height'])
-                    with FileLock(data_path+'.lock', timeout=1):
-                        with open(data_path, 'w') as data_file:
-                            data_file.write(json.dumps(msg['content']))
-                    # Write to DB if new block
-                    if msg.get('type')=='SAVE_BLOCK':
-                        db_query = { 'height': msg['content']['height'] }
-                        db_values_toset = {'$set':{'height': msg['content']['height'],
-                                                   'current_hash': msg['content']['current_hash'],
-                                                   'previous_hash': msg['content']['previous_hash'],
-                                                   'epoch' : msg['content']['epoch'],
-                                                   'transactions': msg['content']['transactions']}}
-                        self._updateDB('blocks', db_query, db_values_toset, False)
-                        self._last_block_height_stored = msg['content']['height']
-                        self.LOGGER.info("New block " +str(msg['content']['height'])+" is valid and has been stored locally and on DB.")
-                    else:
-                        self.LOGGER.info("Block " +str(msg['content']['height'])+" is valid and has been stored locally.")
+                # Save file locally using current hash as filename
+                data_path=S.NET_STORAGE_PATH+str(msg['content']['current_hash'])
+                with FileLock(data_path+'.lock', timeout=1):
+                    with open(data_path, 'w') as data_file:
+                        data_file.write(json.dumps(msg['content']))
+                # Write to DB if new block
+                if msg.get('type')=='SAVE_BLOCK' and (self._last_block_hash_stored == '0' or self._last_block_hash_stored == msg['content']['previous_hash']):
+                    db_query = { 'height': msg['content']['height'] }
+                    db_values_toset = {'$set':{'height': msg['content']['height'],
+                                               'current_hash': msg['content']['current_hash'],
+                                               'previous_hash': msg['content']['previous_hash'],
+                                               'epoch' : msg['content']['epoch'],
+                                               'transactions': msg['content']['transactions']}}
+                    self._updateDB('blocks', db_query, db_values_toset, False)
+                    self._last_block_hash_stored = msg['content']['current_hash']
+                    self.LOGGER.info("New block " +str(msg['content']['height'])+" is valid and has been stored locally and on DB.")
+                else:
+                    self.LOGGER.info("Block " +str(msg['content']['height'])+" is valid and has been stored locally.")
             else:
                 self.LOGGER.info("Block " +str(msg['content']['current_hash'])+" seems invalid and has NOT been stored!")
 
-        if (msg.get('type')=='GET_BLOCK'):
+        if (msg.get('type')=='GET_BLOCK') and self._nodelevel == 'L2':
             # Check if Block data are stored locally
             listofblocks = next(os.walk(S.NET_STORAGE_PATH), (None, None, []))[2]
             self.LOGGER.debug("Msg content is: "+str(msg['content']))
@@ -106,12 +107,13 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 msg['content']='Net storage have not found any node with the requested block!'
                 self._sends_back(msg, hdrs,'BLOCK_NOT_FOUND')
                 
-        if (msg.get('type')=='GET_BLOCKSLIST'):
+        if (msg.get('type')=='GET_BLOCKSLIST') and self._nodelevel == 'L2':
             # Send list of blocks
             msg['content'] = next(os.walk(S.NET_STORAGE_PATH), (None, None, []))[2]
             self._sends_back(msg, hdrs,'BLOCKSLIST')
                     
         return True
+
 
     def _sends_back(self, msg, hdrs, htype):
         hdrs_cli=hdrs.copy()
@@ -123,12 +125,13 @@ class ServiceRunning(ReconnectingNodeConsumer):
         msg['type']=htype
         self.LOGGER.info("Sending back "+str(msg['uid'])+" " +str(hdrs))
         self._msgs_to_send.append([msg, hdrs_cli, hdrs_cli['dest_IP'], 'L2'])
+
         
     def _ticking_actions(self):
         super()._ticking_actions()
         if self._nodelevel=='L2':
             self._update_info_on_DB()
-            self._check_blocks_storage()
+            
 
     def _update_info_on_DB(self):
         # Reformat
@@ -144,29 +147,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
             # Write to DB TODO find a way to update all nodes in one shot?
             self._updateDB('nodes', db_query, db_values_toset, False)
         self.LOGGER.info("Nodes info updated on DB.")
-
-    def _check_blocks_storage(self):
-        listofblocks_str = next(os.walk(S.NET_STORAGE_PATH), (None, None, []))[2]
-        listofblocks=[int(os.path.splitext(x)[0]) for x in listofblocks_str]
-        listofblocks.sort()
-        allnbs=list(range(0,listofblocks[-1]))
-        for b in allnbs:
-            if str(b) not in listofblocks_str:
-                # Request block to another L2 node
-                # prepare the msg to be sent
-                headers=self._initheaders()
-                headers['service']='net_storage'
-                msg=self._initmsg()
-                msg['type']='GET_BLOCK'
-                msg['content']=b
-                #request from another L2 node with net storage
-                IP_sel=self._get_rand_nodeIP('net_storage', self._nodeslist, self._own_IP)
-                if len(IP_sel)>6:
-                    headers['dest_IP']=IP_sel
-                    self._msgs_to_send.append([msg, headers, IP_sel, 'L2'])
-                    self.LOGGER.info("Net storage get missing block from : "+IP_sel)
-                else:
-                    self.LOGGER.warning("No other nodes with net storage service at L2 are available!")
+                            
 
     # Generic method to get infos from AnuuTechDB
     def _delete_dataDB(self, collects, del_list):
@@ -213,6 +194,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
         except:    
             e = sys.exc_info()[1]
             self.LOGGER.error('Impossible to updateDB!!  %s' %str(e))
+            
 
 #----------------------------------------------------------------
 def main():

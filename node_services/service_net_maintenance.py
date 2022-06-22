@@ -40,11 +40,11 @@ class ServiceRunning(ReconnectingNodeConsumer):
         # Update with received nodeslist
         if msg.get('type')=='NODESLIST':
             if msg['content']['level'] == self._nodelevel:
-                self._nodeslist.update(msg['content']['nodeslist'])
+                self._nodeslist=self._update_nodeslist(msg['content']['nodeslist'], self._nodeslist)
             elif int(msg['content']['level'][1]) == int(self._nodelevel[1])-1:
-                self._nodeslist_lower.update(msg['content']['nodeslist'])
+                self._nodeslist_lower=self._update_nodeslist(msg['content']['nodeslist'], self._nodeslist_lower)
             elif int(msg['content']['level'][1]) == int(self._nodelevel[1])+1:
-                self._nodeslist_upper.update(msg['content']['nodeslist'])
+                self._nodeslist_upper=self._update_nodeslist(msg['content']['nodeslist'], self._nodeslist_upper)
 
         return True
 
@@ -149,9 +149,9 @@ class ServiceRunning(ReconnectingNodeConsumer):
             if len(IP_sel)>6:
                 headers['dest_IP']=IP_sel
                 self._msgs_to_send.append([msg, headers, IP_sel, lower_level])
-                self.LOGGER.info("Net maintenance, upper nodeslist requested to: "+str(IP_sel))
+                self.LOGGER.info("Net maintenance, lower nodeslist requested to: "+str(IP_sel))
             else:
-                self.LOGGER.info("Net maintenance, no upper nodeslist found!")
+                self.LOGGER.info("Net maintenance, no lower nodeslist found!")
             
         # SEND NODESLIST TO ALL NODES AT SAME LAYER
         IPs=[]
@@ -217,6 +217,13 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
         return nodeslist
 
+    def _update_nodeslist(self, newlist, nodeslist):
+        for nk in newlist.keys():
+            if 'last_view' in nodeslist[nk] and 'last_view' in newlist[nk]:
+                if newlist[nk]['last_view'] > nodeslist[nk]['last_view']:
+                    nodeslist[nk]=newlist[nk]
+        return nodeslist
+        
     def _get_nodeinfo(self):
         # Update infos of node
         values = {'pubkey': self._pubkey.exportKey('PEM').decode(), 'level': self._nodelevel,

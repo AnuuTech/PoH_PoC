@@ -12,8 +12,8 @@ import time
 from collections import Counter
 
 class ServiceRunning(ReconnectingNodeConsumer):
-    _poh_blocks=[]
-    _nodes_blocks={}
+    _poh_blocks=[] # all blocks of this node
+    _nodes_blocks={} #latest block of each nodes
     _txs_received=[]
     _txs_to_validate=[]
     _txs_validated=[]
@@ -27,7 +27,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
         if os.path.isfile(S.POH_BLOCKS_PATH):
             with open(S.POH_BLOCKS_PATH, 'r') as b_file:
                 self._poh_blocks=json.load(b_file)
-        else:
+        if len(self._poh_blocks)<2:
             # Genesis block
             height=0
             epoch=0
@@ -238,7 +238,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 self._msgs_to_send.append([msg, hdrs, IP_tosend, 'L3'])
 
         # RECEIVING TXS collected by other L1 node
-        elif msg.get('type')=='POH_TXS':
+        elif msg.get('type')=='POH_TXS' and self._nodelevel == 'L1':
             if len(msg['content'])>0:
                 for el in msg['content']:
                     if 'tx_hash' in el: #quick verif that it's a tx
@@ -246,9 +246,57 @@ class ServiceRunning(ReconnectingNodeConsumer):
             self.LOGGER.info("PoH TXS receiving " +str(len(msg['content'])-1) + " txs.")
 
         # RECEIVING LATEST BLOCKS of other L1 node
-        elif msg.get('type')=='POH_LATEST_BLOCKS':
+        elif msg.get('type')=='POH_LATEST_BLOCKS' and self._nodelevel == 'L1':
             self._nodes_blocks[msg['content']['node_uid']]=msg['content']['blocks']
             self.LOGGER.info("PoH latest blocks received from node " +str(msg['content']['node_uid']))
+
+        # RECEIVING GET BLOCKCHAIN REQUEST from other L1 node
+        elif (msg.get('type')=='GET_BLOCKCHAIN') and self._nodelevel == 'L1':
+            # Check if hash is corresponding to current or previous one
+            if (msg['content'] == self._poh_blocks[-1][1] or  msg['content'] == self._poh_blocks[-2][1]):
+                # Send it back
+                # prepare the msg to be sent
+                headers=self._initheaders()
+                headers['service']=self._service
+                headers['dest_uid']=hdrs.get('sender_uid')
+                headers['dest_IP']=hdrs.get('sender_node_IP')
+                msg=self._initmsg()
+                msg['type']='BLOCKCHAIN_BACK'
+                msg['content']=self._poh_blocks
+                self._msgs_to_send.append([msg, headers, headers['dest_IP'], self._nodelevel])
+            elif msg.get('trials') is None or msg.get('trials') < 3: # 'or' is lazy
+                # Forward message to another potential node
+                if msg.get('trials') is None:
+                    msg['trials']=1
+                else:
+                    msg['trials']=msg['trials']+1
+                sent=0
+                for nk in self._nodeslist.keys():
+                    if 'services' in self._nodeslist[nk] and sent == 0:
+                        if 'poh' in self._nodeslist[nk]['services']:
+                            if (self._nodeslist[nk]['services']['poh'] == 1):
+                                if 'IP_address' in self._nodeslist[nk]:
+                                    if self._nodeslist[nk]['IP_address'] != self._own_IP:
+                                        hdrs['dest_IP']=self._nodeslist[nk]['IP_address']
+                                        self._msgs_to_send.append([msg, hdrs, self._nodeslist[nk]['IP_address'], self._nodelevel])
+                                        sent=sent+1
+                                        self.LOGGER.info("msg "+msg['uid']+" forwarded request to node with poh service on node "+hdrs['dest_IP'])
+                                else:
+                                    self.LOGGER.warning("One "+self._nodelevel+" node has no IP set! Impossible to forward block get msg "+msg['uid']+" to it! "+nk)
+            else:# We have not found file after 3 trials
+                self.LOGGER.info("PoH have not found any node with the requested blockchain! " +str(msg['content']))
+
+        # RECEIVING BLOCKCHAIN from other L1 node
+        elif msg.get('type')=='BLOCKCHAIN_BACK' and self._nodelevel == 'L1':
+            # Check if our hash is corresponding to the received blockchain one
+            if msg['content'][-1][1] == self._poh_blocks[-1][1]:
+                if self._verif_blockchain(msg['content']):
+                    self._poh_blocks = msg['content']
+                    self.LOGGER.info("PoH blockchain has been replaced by new one with height: " + str(msg['content'][-1][0]))
+                else:
+                    self.LOGGER.info("PoH blockchain received is invalid!")
+            else:
+                self.LOGGER.info("PoH blockchain received is not corresponding!")
 
         return True
 
@@ -308,16 +356,18 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 # a new epoch started, compute new block
                 self._compute_new_block()
             elif time_in_epoch > 30 and time_in_epoch <= 50: # between >30 and <50 seconds after new epoch, to let time for blocks to reach all L1
-                # check the blocks vs others
-                self._check_blocks()
+                # check the chain vs others
+                self._check_latest_blocks()
             elif time_in_epoch > 50: # >50 seconds after epoch starts
                 # epoch is finishing, finalize and clean pending txs
                 self._finalizing()
 
-        if time_in_epoch>0 and time_in_epoch <= 10: #every minute 
+        if time_in_epoch>0 and time_in_epoch <= 6: #every minute 
             if self._nodelevel == 'L1':
                 # share the latest blocks
                 self._share_latest_blocks() #TODO not sure it is useful (when no txs come?)
+                # check blockchain
+                self._check_blockchain()
                 # save the blocks on disk
                 with open(S.POH_BLOCKS_PATH, 'w') as b_file:
                     b_file.write(json.dumps(self._poh_blocks))       
@@ -392,7 +442,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
             # Add new block!
             self._poh_blocks.append([new_height, b_hash, epoch])
-            self.LOGGER.info("A new block has been added! " + str([new_height, b_hash, epoch]))
+            self.LOGGER.info("A new block has been locally added! " + str([new_height, b_hash, epoch]))
             # also update own entry in nodes_blocks
             self._nodes_blocks[self._uid]={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
 
@@ -428,7 +478,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
         self.LOGGER.info("POH last blocks shared with : "+str(j)+" L1 nodes.")
 
         
-    def _check_blocks(self):
+    def _check_latest_blocks(self):
         # determine epoch
         epoch=divmod(time.time()-S.E_TRIM, 60)[0]
         
@@ -483,29 +533,17 @@ class ServiceRunning(ReconnectingNodeConsumer):
         if own_occ == max_occ and self._poh_blocks[-1][0]>=chains[max_occ_chains[0]][0]: # same occurence and height is same or higher -->stay on chain
             self.LOGGER.info("Staying on best chain: " + str(self._poh_blocks[-1]))
         elif own_occ == max_occ and self._poh_blocks[-1][0]<chains[max_occ_chains[0]][0]: # same occurence but height is lower --> switch chain
-            self._poh_blocks[-1][1]=max_occ_chains[0] # current hash
-            self._poh_blocks[-2][1]=chains[max_occ_chains[0]][2] # previous hash
-            self._poh_blocks[-1][0]=chains[max_occ_chains[0]][0] # current height
-            self._poh_blocks[-1][2]=epoch # current epoch
-            self._nodeslist[self._uid]['blocks']={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
+            self._switch_chain(chains, max_occ_chains, epoch)
             self._share_latest_blocks()
             self.LOGGER.info("Switching to highest chain: " + str(chains[max_occ_chains[0]]))
         elif max_occ > nb_chains/2: # there is a dominating chain and we are not on it:
             # Switch chain TODO privilege LONGEST chain if several existing? (already switching to HIGHEST)
-            self._poh_blocks[-1][1]=max_occ_chains[0] # current hash
-            self._poh_blocks[-2][1]=chains[max_occ_chains[0]][2] # previous hash
-            self._poh_blocks[-1][0]=chains[max_occ_chains[0]][0] # current height
-            self._poh_blocks[-1][2]=epoch # current epoch
-            self._nodeslist[self._uid]['blocks']={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
+            self._switch_chain(chains, max_occ_chains, epoch)
             self._share_latest_blocks()
             self.LOGGER.info("Switching to dominating chain: " + str(chains[max_occ_chains[0]]))         
-        elif (time.time()-S.E_TRIM)/60 > self._poh_blocks[-1][2] + 1.5*self._node_tick_interval: # all nodes should have had time to compute next block
+        elif divmod(time.time()-S.E_TRIM,60)[1] > 40: # all nodes should have had time to compute next block
             # Switch chain TODO privilege longest chain if several existing?
-            self._poh_blocks[-1][1]=max_occ_chains[0]
-            self._poh_blocks[-2][1]=chains[max_occ_chains[0]][2]
-            self._poh_blocks[-1][0]=chains[max_occ_chains[0]][0]
-            self._poh_blocks[-1][2]=epoch # current epoch
-            self._nodeslist[self._uid]['blocks']={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
+            self._switch_chain(chains, max_occ_chains, epoch)
             self._share_latest_blocks()
             self.LOGGER.info("Switching to better chain: " + str(chains[max_occ_chains[0]]))
         else:
@@ -545,7 +583,61 @@ class ServiceRunning(ReconnectingNodeConsumer):
         # Reset info for deletion in any case
         self._own_last_hash == ''
         self._txs_validated = [] #TODO only if winning block
-        self._last_epoch=0   
+        self._last_epoch=0
+
+        
+    def _switch_chain(self, chains, max_occ_chains, epoch):
+        # update last blocks
+        self._poh_blocks[-1][1]=max_occ_chains[0]
+        self._poh_blocks[-2][1]=chains[max_occ_chains[0]][2]
+        self._poh_blocks[-1][0]=chains[max_occ_chains[0]][0]
+        self._poh_blocks[-1][2]=epoch # current epoch
+        self._nodes_blocks[self._uid]={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
+        self._send_get_blockchain()
+
+
+    def _send_get_blockchain(self):
+        # Request blockchain to another L1 node
+        # prepare the msg to be sent
+        headers=self._initheaders()
+        headers['service']=self._service
+        msg=self._initmsg()
+        msg['type']='GET_BLOCKCHAIN'
+        msg['content']=self._poh_blocks[-1][1] # put last hash to only get compatible blockchain
+        #request from another L1 node with poh service
+        IP_sel=self._get_rand_nodeIP(self._service, self._nodeslist, self._own_IP)
+        if len(IP_sel)>6:
+            headers['dest_IP']=IP_sel
+            self._msgs_to_send.append([msg, headers, IP_sel, 'L1'])
+            self.LOGGER.info("PoH get blockchain from : "+IP_sel)
+        else:
+            self.LOGGER.warning("No other nodes with PoH service at L1 are available, no blockchain obtained!")
+
+
+    def _check_blockchain(self):
+        if self._verif_blockchain(self._poh_blocks):
+            self.LOGGER.info("PoH, Blockchain verified.")
+        else:
+            self._send_get_blockchain()
+            self.LOGGER.info("PoH, Blockchain invalid, trying to get a correct one.")
+
+
+    def _verif_blockchain(self, v_poh_blocks):
+        no_error = True
+        for j in range(0,len(v_poh_blocks)-1):
+            # check height
+            if(v_poh_blocks[j+1][0]!=v_poh_blocks[j][0]+1):
+                self.LOGGER.debug("Blockchain Height error at " +str(j)+ " "+str(v_poh_blocks[j+1][0]) +" vs "+ str(v_poh_blocks[j][0]))
+                no_error = False
+            # check epoch
+            if(v_poh_blocks[j+1][2]<=v_poh_blocks[j][2]):
+                self.LOGGER.debug("Blockchain Epoch error at " +str(j)+ ' '+str(v_poh_blocks[j+1][2]) +" vs "+ str(v_poh_blocks[j][2]))
+                no_error = False
+            # check hash
+            if(v_poh_blocks[j+1][1]==v_poh_blocks[j][1]):
+                self.LOGGER.debug("Blockchain duplicate hash: "+v_poh_blocks[j][1])
+                no_error = False
+        return no_error
 
 
 #----------------------------------------------------------------

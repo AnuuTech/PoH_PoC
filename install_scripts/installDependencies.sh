@@ -8,7 +8,7 @@ if [ "$1" = 'mongo' ]; then
 else
 	mongo=0
 fi
-	
+
 ## GET PRE-REQUISITES AND REPOSITORIES
 apt-get install curl gnupg apt-transport-https -y
 
@@ -95,7 +95,8 @@ pip3 install filelock
 
 
 ## INSTALL MONGODB V5
-if $mongo == 0; then
+echo $mongo
+if [ $mongo -ne 1 ]; then
 	exit
 fi
 apt -y install mongodb-org

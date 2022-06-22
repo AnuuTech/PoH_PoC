@@ -759,7 +759,7 @@ class ReconnectingNodeConsumer(object):
         random.shuffle(ns_keys)
         IP_sel=''
         for j in ns_keys:
-            if ('IP_address' in nodes_ns[j] and 'IP_address' != exIP and len(IP_sel)<7):
+            if ('IP_address' in nodes_ns[j] and nodes_ns[j]['IP_address'] != exIP and len(IP_sel)<7):
                 return nodes_ns[j]['IP_address']
         return ''
 
