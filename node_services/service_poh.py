@@ -288,8 +288,9 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
         # RECEIVING BLOCKCHAIN from other L1 node
         elif msg.get('type')=='BLOCKCHAIN_BACK' and self._nodelevel == 'L1':
-            # Check if our hash is corresponding to the received blockchain one
-            if msg['content'][-1][1] == self._poh_blocks[-1][1]:
+            # Check if our last block is corresponding to the received blockchain one
+            if (msg['content'][-1][1] == self._poh_blocks[-1][1] and msg['content'][-2][1] == self._poh_blocks[-2][1] and
+                msg['content'][-1][0] == self._poh_blocks[-1][0] and msg['content'][-1][2] == self._poh_blocks[-1][2]) :
                 if self._verif_blockchain(msg['content']):
                     self._poh_blocks = msg['content']
                     self.LOGGER.info("PoH blockchain has been replaced by new one with height: " + str(msg['content'][-1][0]))

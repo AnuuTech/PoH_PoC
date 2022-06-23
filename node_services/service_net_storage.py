@@ -58,7 +58,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
                     with open(data_path, 'w') as data_file:
                         data_file.write(json.dumps(msg['content']))
                 # Write to DB if new block
-                if msg.get('type')=='SAVE_BLOCK' and (self._last_block_hash_stored == '0' or self._last_block_hash_stored == msg['content']['previous_hash']):
+                if msg.get('type')=='SAVE_BLOCK' and self._last_block_hash_stored != msg['content']['current_hash']:
                     db_query = { 'height': msg['content']['height'] }
                     db_values_toset = {'$set':{'height': msg['content']['height'],
                                                'current_hash': msg['content']['current_hash'],

@@ -219,9 +219,12 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
     def _update_nodeslist(self, newlist, nodeslist):
         for nk in newlist.keys():
-            if 'last_view' in nodeslist[nk] and 'last_view' in newlist[nk]:
-                if newlist[nk]['last_view'] > nodeslist[nk]['last_view']:
-                    nodeslist[nk]=newlist[nk]
+            if nk not in nodeslist.keys(): # node not existing yet -> put in
+                nodeslist[nk]=newlist[nk]
+            else: # only update if more recent data
+                if 'last_view' in nodeslist[nk] and 'last_view' in newlist[nk]:
+                    if newlist[nk]['last_view'] > nodeslist[nk]['last_view']:
+                        nodeslist[nk]=newlist[nk]
         return nodeslist
         
     def _get_nodeinfo(self):
