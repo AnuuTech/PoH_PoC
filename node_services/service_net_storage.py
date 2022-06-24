@@ -91,7 +91,9 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 else:
                     msg['trials']=msg['trials']+1
                 sent=0
-                for nk in self._nodeslist.keys():
+                ns_keys=list(self._nodeslist.keys())
+                random.shuffle(ns_keys)
+                for nk in ns_keys:
                     if 'services' in self._nodeslist[nk] and sent == 0:
                         if 'net_storage' in self._nodeslist[nk]['services']:
                             if (self._nodeslist[nk]['services']['net_storage'] == 1):

@@ -9,6 +9,7 @@ from Crypto.Hash import SHA256
 from Crypto.PublicKey import RSA
 import binascii
 import time
+import random
 from collections import Counter
 
 class ServiceRunning(ReconnectingNodeConsumer):
@@ -19,7 +20,8 @@ class ServiceRunning(ReconnectingNodeConsumer):
     _txs_validated=[]
     _own_last_hash=''
     _last_epoch=0
-
+    _txs_shared = False
+    _invalidBC = True # at start do not participate to consensus until catching up
 
     def _initnode(self):
         super()._initnode()
@@ -38,9 +40,6 @@ class ServiceRunning(ReconnectingNodeConsumer):
             self._poh_blocks=[[height, S.GENESIS_HASH, epoch],
                               [height+1, b_hash2, epoch+1]]
             
-        # also update own entry in nodes_blocks
-        self._nodes_blocks[self._uid]={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
-
         self._node_tick_interval=5 #overriding the one of service_class
         self.LOGGER.info("INITALISATION poh service done")
  
@@ -218,7 +217,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
                              'signer_nodeL1': msg['content']['signer_nodeL1'], 'fingerprintL1': msg['content']['fingerprintL1']}
                 # Store Tx in received list
                 self._txs_received.append(tx_rec)
-                self.LOGGER.info("Tx is stored in recevied txs: " +str(msg['uid']))
+                self.LOGGER.info("Tx is stored in received txs: " +str(msg['uid']))
             else:
                 self.LOGGER.warning("POH storing in Tx received cancelled!")
 
@@ -253,7 +252,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
         # RECEIVING GET BLOCKCHAIN REQUEST from other L1 node
         elif (msg.get('type')=='GET_BLOCKCHAIN') and self._nodelevel == 'L1':
             # Check if hash is corresponding to current or previous one
-            if (msg['content'] == self._poh_blocks[-1][1] or  msg['content'] == self._poh_blocks[-2][1]):
+            if (not self._invalidBC and (msg['content'] == self._poh_blocks[-1][1] or  msg['content'] == self._poh_blocks[-2][1])):
                 # Send it back
                 # prepare the msg to be sent
                 headers=self._initheaders()
@@ -271,7 +270,9 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 else:
                     msg['trials']=msg['trials']+1
                 sent=0
-                for nk in self._nodeslist.keys():
+                ns_keys=list(self._nodeslist.keys())
+                random.shuffle(ns_keys)
+                for nk in ns_keys:
                     if 'services' in self._nodeslist[nk] and sent == 0:
                         if 'poh' in self._nodeslist[nk]['services']:
                             if (self._nodeslist[nk]['services']['poh'] == 1):
@@ -289,15 +290,12 @@ class ServiceRunning(ReconnectingNodeConsumer):
         # RECEIVING BLOCKCHAIN from other L1 node
         elif msg.get('type')=='BLOCKCHAIN_BACK' and self._nodelevel == 'L1':
             # Check if our last block is corresponding to the received blockchain one
-            if (msg['content'][-1][1] == self._poh_blocks[-1][1] and msg['content'][-2][1] == self._poh_blocks[-2][1] and
-                msg['content'][-1][0] == self._poh_blocks[-1][0] and msg['content'][-1][2] == self._poh_blocks[-1][2]) :
-                if self._verif_blockchain(msg['content']):
-                    self._poh_blocks = msg['content']
-                    self.LOGGER.info("PoH blockchain has been replaced by new one with height: " + str(msg['content'][-1][0]))
-                else:
-                    self.LOGGER.info("PoH blockchain received is invalid!")
+            if self._verif_blockchain(msg['content']):
+                self._poh_blocks = msg['content']
+                self.__invalidBC = False # back to normal
+                self.LOGGER.info("PoH blockchain has been replaced by new one with height: " + str(msg['content'][-1][0]))
             else:
-                self.LOGGER.info("PoH blockchain received is not corresponding!")
+                self.LOGGER.info("PoH blockchain received is invalid!")
 
         return True
 
@@ -351,15 +349,15 @@ class ServiceRunning(ReconnectingNodeConsumer):
         time_in_epoch=divmod(time.time()-S.E_TRIM,60)[1]
         if self._nodelevel == 'L1':
             self.LOGGER.debug("Current Epoch: "+str(divmod(time.time()-S.E_TRIM,60)[0]) + " and last block's epoch: "+str(self._poh_blocks[-1][2]))
-            if  time_in_epoch > 0 and time_in_epoch <= 10: # between 0 and 10 seconds after epoch start, share all received txs
+            if  time_in_epoch > 0 and time_in_epoch <= 7.5: # between 0 and 10 seconds after epoch start, share all received txs
                 self._share_all_pending_txs()
-            elif  time_in_epoch > 15 and time_in_epoch <= 25: # between 15 to 25 seconds after epoch start, to let time for txs to reach all L1
+            elif  time_in_epoch > 20 and time_in_epoch <= 30: # between 15 to 25 seconds after epoch start, to let time for txs to reach all L1
                 # a new epoch started, compute new block
                 self._compute_new_block()
-            elif time_in_epoch > 30 and time_in_epoch <= 50: # between >30 and <50 seconds after new epoch, to let time for blocks to reach all L1
+            elif time_in_epoch > 40 and time_in_epoch <= 52.5: # between >30 and <50 seconds after new epoch, to let time for blocks to reach all L1
                 # check the chain vs others
                 self._check_latest_blocks()
-            elif time_in_epoch > 50: # >50 seconds after epoch starts
+            elif time_in_epoch > 52.5: # >50 seconds after epoch starts
                 # epoch is finishing, finalize and clean pending txs
                 self._finalizing()
 
@@ -369,13 +367,17 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 self._share_latest_blocks() #TODO not sure it is useful (when no txs come?)
                 # check blockchain
                 self._check_blockchain()
-                # save the blocks on disk
-                with open(S.POH_BLOCKS_PATH, 'w') as b_file:
-                    b_file.write(json.dumps(self._poh_blocks))       
+                # save the blocks on disk if not invalid
+                if not self._invalidBC:
+                    with open(S.POH_BLOCKS_PATH, 'w') as b_file:
+                        b_file.write(json.dumps(self._poh_blocks))       
         return
 
 
     def _share_all_pending_txs(self):
+        # do it once per epoch
+        if self._txs_shared:
+            return
         # emptying the txs_received safely, in case new txs are currently received 
         temp_all=[]
         for i in range(0, len(self._txs_received)):
@@ -387,7 +389,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
         
         # prepare the msg to be sent with the txs received
         headers=self._initheaders()
-        headers['service']='poh'
+        headers['service']='poh' 
         msg=self._initmsg()
         msg['type']='POH_TXS'
         msg['content']=temp_all
@@ -400,20 +402,22 @@ class ServiceRunning(ReconnectingNodeConsumer):
                     if (self._nodeslist[nk]['services']['poh'] == 1):
                         if 'IP_address' in self._nodeslist[nk] and self._nodeslist[nk]['IP_address'] != self._own_IP:
                             headers['dest_IP']=self._nodeslist[nk]['IP_address']
-                            self._msgs_to_send.append([msg, headers, self._nodeslist[nk]['IP_address'], 'L1'])
+                            self._msgs_to_send.append([msg, headers.copy(), self._nodeslist[nk]['IP_address'], 'L1'])
+                            #self.LOGGER.info(str(self._msgs_to_send[-1]))
                             j=j+1
-        self.LOGGER.info("POH txs shared with : "+str(j)+" L1 nodes.")
+        self._txs_shared = True
+        self.LOGGER.info("POH " + str(len(temp_all))+" txs shared with : "+str(j)+" L1 nodes.")
           
 
     def _compute_new_block(self):
-        # don't run if finalize has not been done or no txs have come
-        if self._last_epoch>0 or len(self._txs_to_validate)==0:
+        # don't run if finalize has not been done or no txs have come or BC is not correct
+        if self._last_epoch>0 or len(self._txs_to_validate)==0 or self._invalidBC:
             return
         # determine epoch
         epoch=divmod(time.time()-S.E_TRIM, 60)[0]
 
         # order all txs by timestamps TODO check if txs have not already been included in a previous block?
-        print(self._txs_to_validate)
+        #print(self._txs_to_validate)
         txs_pend=sorted(self._txs_to_validate, key=lambda t: t['timestamp'])
         self._txs_to_validate=[]
 
@@ -457,14 +461,16 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
 
     def _share_latest_blocks(self):
-
+        # don't share if invalid blockchain
+        if self._invalidBC:
+            return
         # prepare the msg to be sent
         headers=self._initheaders()
         headers['service']='poh'
         msg=self._initmsg()
         msg['type']='POH_LATEST_BLOCKS'
         msg['content']['node_uid']=self._uid
-        msg['content']['blocks']=self._nodes_blocks[self._uid]
+        msg['content']['blocks']={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
 
         #send to all L1 nodes with PoH
         j=0
@@ -474,7 +480,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
                     if (self._nodeslist[nk]['services']['poh'] == 1):
                         if 'IP_address' in self._nodeslist[nk] and self._nodeslist[nk]['IP_address'] != self._own_IP:
                             headers['dest_IP']=self._nodeslist[nk]['IP_address']
-                            self._msgs_to_send.append([msg, headers, self._nodeslist[nk]['IP_address'], 'L1'])
+                            self._msgs_to_send.append([msg, headers.copy(), self._nodeslist[nk]['IP_address'], 'L1'])
                             j=j+1
         self.LOGGER.info("POH last blocks shared with : "+str(j)+" L1 nodes.")
 
@@ -535,17 +541,17 @@ class ServiceRunning(ReconnectingNodeConsumer):
             self.LOGGER.info("Staying on best chain: " + str(self._poh_blocks[-1]))
         elif own_occ == max_occ and self._poh_blocks[-1][0]<chains[max_occ_chains[0]][0]: # same occurence but height is lower --> switch chain
             self._switch_chain(chains, max_occ_chains, epoch)
-            self._share_latest_blocks()
+            #self._share_latest_blocks()
             self.LOGGER.info("Switching to highest chain: " + str(chains[max_occ_chains[0]]))
         elif max_occ > nb_chains/2: # there is a dominating chain and we are not on it:
             # Switch chain TODO privilege LONGEST chain if several existing? (already switching to HIGHEST)
             self._switch_chain(chains, max_occ_chains, epoch)
-            self._share_latest_blocks()
+            #self._share_latest_blocks()
             self.LOGGER.info("Switching to dominating chain: " + str(chains[max_occ_chains[0]]))         
         elif divmod(time.time()-S.E_TRIM,60)[1] > 40: # all nodes should have had time to compute next block
             # Switch chain TODO privilege longest chain if several existing?
             self._switch_chain(chains, max_occ_chains, epoch)
-            self._share_latest_blocks()
+            #self._share_latest_blocks()
             self.LOGGER.info("Switching to better chain: " + str(chains[max_occ_chains[0]]))
         else:
             self.LOGGER.info("For now staying on current chain: " + str(self._poh_blocks[-1]))# for now stay on chain
@@ -554,7 +560,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
     def _finalizing(self):
         self.LOGGER.debug("Finalizing! " + str([len(self._txs_validated), self._own_last_hash]))
         # Check that our list of txs is the one of the winning block TODO if not winning block check which txs from txs_to_delete have not been added to blocks!
-        if len(self._txs_validated)>0 and self._own_last_hash == self._poh_blocks[-1][1]:
+        if len(self._txs_validated)>0 and self._own_last_hash == self._poh_blocks[-1][1] and not self._invalidBC:
             # prepare the msg to be sent
             headers=self._initheaders()
             headers['service']='net_storage'
@@ -574,7 +580,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
                             if 'IP_address' in self._nodeslist_upper[nk]:
                                 headers['dest_uid']=nk
                                 headers['dest_IP']=self._nodeslist_upper[nk]['IP_address']
-                                self._msgs_to_send.append([msg, headers, headers['dest_IP'], 'L2'])
+                                self._msgs_to_send.append([msg, headers.copy(), headers['dest_IP'], 'L2'])
                                 j=j+1
             if j>0:
                 self.LOGGER.info("Block has been saved in " +str(j)+" L2 nodes.")
@@ -585,15 +591,22 @@ class ServiceRunning(ReconnectingNodeConsumer):
         self._own_last_hash == ''
         self._txs_validated = [] #TODO only if winning block
         self._last_epoch=0
-
+        self._txs_shared = False
+        if self._invalidBC:
+            self._nodes_blocks={}
+        else:
+            self._nodes_blocks[self._uid]={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
         
     def _switch_chain(self, chains, max_occ_chains, epoch):
+        # declare invalid blokchain
+        self._invalidBC = True
+
         # update last blocks
         self._poh_blocks[-1][1]=max_occ_chains[0]
         self._poh_blocks[-2][1]=chains[max_occ_chains[0]][2]
         self._poh_blocks[-1][0]=chains[max_occ_chains[0]][0]
         self._poh_blocks[-1][2]=epoch # current epoch
-        self._nodes_blocks[self._uid]={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
+        #self._nodes_blocks[self._uid]={'current': self._poh_blocks[-1][1], 'previous': self._poh_blocks[-2][1], 'height': self._poh_blocks[-1][0]}
         self._send_get_blockchain()
 
 
@@ -610,15 +623,17 @@ class ServiceRunning(ReconnectingNodeConsumer):
         if len(IP_sel)>6:
             headers['dest_IP']=IP_sel
             self._msgs_to_send.append([msg, headers, IP_sel, 'L1'])
-            self.LOGGER.info("PoH get blockchain from : "+IP_sel)
+            self.LOGGER.info("PoH getting blockchain from : "+IP_sel)
         else:
             self.LOGGER.warning("No other nodes with PoH service at L1 are available, no blockchain obtained!")
 
 
     def _check_blockchain(self):
         if self._verif_blockchain(self._poh_blocks):
+            self._invalidBC = False
             self.LOGGER.info("PoH, Blockchain verified.")
         else:
+            self._invalidBC = True
             self._send_get_blockchain()
             self.LOGGER.info("PoH, Blockchain invalid, trying to get a correct one.")
 
