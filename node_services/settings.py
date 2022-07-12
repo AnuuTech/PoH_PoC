@@ -25,8 +25,9 @@ DEFAULT_TICK_INTERVAL=20.0 # may be increased to 60 sec
 # Specific paths for services
 POH_BLOCKS_PATH='node_data/blocks.file'
 NET_STORAGE_PATH='node_data/blocks/'
-NODE_DOWNTIME_LIMIT=900 #in seconds
 DATA_STORAGE_PATH='node_data/data_storage/'
 
 # Additional specific settings
 MIN_NUMBER_OF_DATA_REPLICA=2
+NODE_DOWNTIME_LIMIT=900 #in seconds
+POH_MAX_TX_AGE=2 # Txs not confirmed and older than 2 epochs are discarded

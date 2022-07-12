@@ -91,7 +91,7 @@ def verif_L2blocks(inp, push, IP_sel):
             with FileLock(S.NET_STORAGE_PATH+str(c_hash)+'.lock', timeout=1):
                 with open(S.NET_STORAGE_PATH+str(c_hash), 'r') as filedata:
                     block2=json.load(filedata)
-            print(block2['height'])
+            #print(block2['height'])
             #check signature
             if check_block(block2):
                 if len(block1) != 0:
