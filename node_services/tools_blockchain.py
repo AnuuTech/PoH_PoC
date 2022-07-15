@@ -75,17 +75,20 @@ def verif_L1BC():
             print('oups!')
     print('finished!')
 
-def verif_L2blocks(inp, push, IP_sel):
+def verif_L2blocks(inp, push, IP_sel, nb_max_block):
     block1={}
     block2={}
     all_blocks=[]
+    bc_ok=True
     c_hash=inp
     listofblocks_str = next(os.walk(S.NET_STORAGE_PATH), (None, None, []))[2]
     print(str(len(listofblocks_str)))
-    while c_hash != '00f1bd32b41a160291e28b79276d2db53f943795451f74be4cdba56cd3ca1170': #block 1 Hash
+    nb_block=0
+    while (nb_block < int(nb_max_block) and c_hash != '00f1bd32b41a160291e28b79276d2db53f943795451f74be4cdba56cd3ca1170'): #block 1 Hash
         block1=copy.deepcopy(block2)
         if str(c_hash) not in listofblocks_str:
             print("block "+str(c_hash)+" is missing")
+            bc_ok=False
             break
         else:
             with FileLock(S.NET_STORAGE_PATH+str(c_hash)+'.lock', timeout=1):
@@ -98,24 +101,34 @@ def verif_L2blocks(inp, push, IP_sel):
                     #check coresponding Hash
                     if block1['previous_hash'] != block2['current_hash']:
                         print(str(c_hash)+": Hash not matching: "+str(block2['current_hash'])+ ' vs '+str(block1['previous_hash']))
+                        bc_ok=False
                         break
                     #check height
                     if block1['height'] != block2['height']+1:
                         print(str(c_hash)+": Height not increased by 1: "+str(block2['height'])+ ' vs '+str(block1['height']))
+                        bc_ok=False
                         break
                     #check epoch
                     if block1['epoch'] <= block2['epoch']: # this would be wrong!
                         print(str(c_hash)+": Epoch not increasing: "+str(block2['epoch'])+ ' vs '+str(block1['epoch']))
+                        bc_ok=False
                         break
                 c_hash=block2['previous_hash']
                 if push:
                     all_blocks.append(block2)
             else:
                 print(str(c_hash)+": Block invalid!")
+                bc_ok=False
                 break
+        nb_block=nb_block+1
+    if bc_ok:
+        print("All blocks verified!")
         if push:
             updatingDB(IP_sel, all_blocks)
-                        
+    else:
+        print("Chain of blocks not complete or invalid...")
+        
+                         
 def check_block(block):
     # Verify Hash is correct
     hh=SHA256.new(block['previous_hash'].encode())# put previous block hash
@@ -176,11 +189,13 @@ def reconfigure_blocks():
 
 def updatingDB(IP_sel, blocks_list):
     db_pass=ii_helper('node_data/access.bin', '11')
+    height_list=[el['height'] for el in blocks_list]
     # update data to DB
     db_url='mongodb://admin:' + urllib.parse.quote(db_pass) +'@'+IP_sel+':28991/?authMechanism=DEFAULT&authSource=admin'
     with pymongo.MongoClient(db_url) as db_client:
         at_db = db_client['AnuuTech_DB']
         col = at_db['blocks']
+        col.delete_many({'height':{'$in':height_list}})
         col.insert_many(blocks_list)
         print(str(len(blocks_list))+" block(s) written on DB "+str(IP_sel))
 
@@ -198,17 +213,18 @@ def main():
         tool=sys.argv[1]
         arg=sys.argv[2]
         if tool == 'verifL2':
-            verif_L2blocks(arg, False, '')
+            verif_L2blocks(arg, False, '', '')
         elif tool == 'removalL1':
             L1_blocks_removal(arg)
         elif tool == 'fullverif':
             full_BC_verif(arg)
-    if len(sys.argv) == 4 :
+    if len(sys.argv) == 5 :
         tool=sys.argv[1]
         arg=sys.argv[2]
         arg2=sys.argv[3]
+        arg3=sys.argv[4]
         if tool == 'pushonDBL2':
-            verif_L2blocks(arg, True, arg2)
+            verif_L2blocks(arg, True, arg2, arg3)
         
         
 if __name__ == '__main__':
