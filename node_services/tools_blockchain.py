@@ -213,7 +213,7 @@ def main():
         tool=sys.argv[1]
         arg=sys.argv[2]
         if tool == 'verifL2':
-            verif_L2blocks(arg, False, '', '')
+            verif_L2blocks(arg, False, '', 1000000)
         elif tool == 'removalL1':
             L1_blocks_removal(arg)
         elif tool == 'fullverif':

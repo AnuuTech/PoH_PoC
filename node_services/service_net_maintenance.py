@@ -156,7 +156,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
         # SEND NODESLIST TO ALL NODES AT SAME LAYER
         IPs=[]
         # if no nodes, get default ones
-        if len(self._nodeslist) == 0:
+        if len(self._nodeslist) <= 1: # excluding itself
             IPs=self._get_default_IPs(self._nodelevel)
 
         # update node info

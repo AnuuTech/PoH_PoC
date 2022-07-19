@@ -23,7 +23,8 @@ import urllib
 import signal
 signal.signal(signal.SIGINT, signal.default_int_handler) # to ensure Signal to be received
 
-Title="AnuuTech Basic client V-0.2.0"
+SW_VERSION="0.2.2"
+Title="AnuuTech Basic client V-"+SW_VERSION
 
 #helper function
 def ii_helper(fily, sel):
@@ -704,7 +705,8 @@ def initmsg():
         'uid': randomstring(12),
         'content': {},
         'type': '',
-        'timestamp':time.time()
+        'timestamp': time.time(),
+        'version': SW_VERSION
         }
     return msg_empty
 

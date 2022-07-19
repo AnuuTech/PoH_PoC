@@ -587,7 +587,8 @@ class ReconnectingNodeConsumer(object):
             'uid': self.randomstring(12),
             'content': {},
             'type': '',
-            'timestamp':time.time()
+            'timestamp': time.time(),
+            'version': S.SW_VERSION
             }
         return msg_empty
 
