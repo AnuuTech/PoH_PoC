@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset='utf-8'>
+    <title>AnuuTech AKEY Test Website</title>
+    <meta name='viewport' content='width=device-width, initial-scale=1'>
+    <script src="https://cdn.jsdelivr.net/npm/web3@latest/dist/web3.min.js"></script>
+</head>
+  
+<body>
+
+    AnuuTech  AKEY  Test
+    <br /><br />
+  	<p><label for="address">Address of recipient for service fees:</label>
+  	<input id="address" type="text" name="address" value="put address"></p>
+    <p><label for="amount">Amount of service fees:</label>
+  	<input id="amount" type="text" name="amount" value="put amount in AKEY"></p>
+    <button onclick="sendAmount();">Pay service fee</button>
+    <br /><br />
+    <button onclick="getAmount();">Get total paid amount available for service recipient</button>
+    <br /><br />
+      <button onclick="retrieveAmount();">Collect service fees</button>
+    <br /><br />
+    Status: <span id="status">Loading...</span>
+
+
+</body>
+  
+<script type="text/javascript">
+async function loadWeb3() {
+      if (window.ethereum) {
+          window.web3 = new Web3(window.ethereum);
+          window.ethereum.enable();
+      }
+}
+
+async function loadContract() {
+    return await new window.web3.eth.Contract([
+	{
+		"inputs": [],
+		"stateMutability": "payable",
+		"type": "constructor"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "address",
+				"name": "dest",
+				"type": "address"
+			},
+			{
+				"internalType": "string",
+				"name": "tx_hash",
+				"type": "string"
+			}
+		],
+		"name": "callTransfer",
+		"outputs": [],
+		"stateMutability": "payable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "address",
+				"name": "dest",
+				"type": "address"
+			}
+		],
+		"name": "payments",
+		"outputs": [
+			{
+				"internalType": "uint256",
+				"name": "",
+				"type": "uint256"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "address payable",
+				"name": "payee",
+				"type": "address"
+			}
+		],
+		"name": "withdrawPayments",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	}
+], '[CONTRACT NUMBER]');
+}
+
+async function getCurrentAccount() {
+    const accounts = await window.web3.eth.getAccounts();
+    return accounts[0];
+}
+  
+async function getAmount() {
+    updateStatus('fetching amount available...');
+    var address=document.getElementById("address").value;
+    const amounta = await window.contract.methods.payments(address).call();
+    const amountakey=web3.utils.fromWei(amounta)
+  updateStatus(`amount available: ${amountakey} AKEY`);
+}
+
+  async function sendAmount() {
+    const account = await getCurrentAccount();
+	console.log("account:", account);
+	var address=document.getElementById("address").value;
+	var amount=document.getElementById("amount").value;
+	console.log("address:", address);
+	console.log("amount:", amount);
+	const outp= await window.contract.methods.callTransfer(address, web3.utils.toHex("test string")).send({ from: account, value: web3.utils.toWei(amount, 'ether')});
+  }
+  
+    async function retrieveAmount() {
+    const account = await getCurrentAccount();
+	console.log("account:", account);
+	var address=document.getElementById("address").value;
+    const outp= await window.contract.methods.withdrawPayments(address).send({ from: account });
+	console.log(outp)
+  }
+
+
+function updateStatus(status) {
+    const statusEl = document.getElementById('status');
+    statusEl.innerHTML = status;
+    console.log(status); 
+}
+  
+async function load() {
+    await loadWeb3();
+    updateStatus('Web3 loaded.');
+    window.contract = await loadContract(); 
+    updateStatus('Contract loaded.');
+    
+}
+
+load();
+  </script>
+</html>
