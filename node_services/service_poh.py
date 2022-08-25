@@ -58,6 +58,10 @@ class ServiceRunning(ReconnectingNodeConsumer):
 
         if (msg.get('type')=='POH_L3_R1' and (hdrs.get('dest_uid') == self._uid or
                                                hdrs.get('dest_IP') == self._own_IP)):
+            # First CHECK FEE is paid and correct
+            if not self._check_fee(msg, hdrs, S.FEE_POH, self.ii_helper('node_data/access.bin', '16')):
+                # Message is thus not processed
+                return True
             tt=time.time()
             #Create fingerprint
             fingerprint = self._do_signature(msg['content']['tx_hash'], tt)
@@ -192,7 +196,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
                                      msg['content']['fingerprint_L2L1'], msg['content']['signer_node_L2L1']):
                 # sign the hash       
                 fingerprint3 = self._do_signature(msg['content']['tx_hash'], msg['content']['fingerprintL2'])
-                # Select L2 node based on hash (sum of all characters), restricted to nodes with poh service
+                # Select L1 node based on hash (sum of all characters), restricted to nodes with poh service
                 nodes_ps=[]
                 for nk in self._nodeslist.keys():
                     if 'services' in self._nodeslist[nk]:

@@ -10,7 +10,7 @@ contract BasicPP is PullPayment {
   constructor() payable { }
 
   // helper function to call asyncTransfer
-  function callTransfer(address dest, string calldata tx_hash) public payable {
+  function callTransfer(address dest, string calldata tx_hash, string calldata node_id) public payable {
     _asyncTransfer(dest, msg.value);
   }
 }

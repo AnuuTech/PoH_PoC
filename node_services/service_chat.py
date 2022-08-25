@@ -3,10 +3,16 @@ from service_class import ReconnectingNodeConsumer
 import sys
 import os
 import json
+import settings as S
 
 class ServiceRunning(ReconnectingNodeConsumer):
         
     def _msg_process(self, msg, hdrs):
+        # First CHECK FEE is paid and correct
+        if msg['type'] == 'CHAT' :
+            if not self._check_fee(msg, hdrs, S.FEE_CHAT, self.ii_helper('node_data/access.bin', '17')):
+                # Message is thus not processed
+                return True
 
         if len(hdrs['dest_IP'])>6 and hdrs['dest_IP'] != self._own_IP:
             # dest IP known, forward to node with the IP

@@ -33,6 +33,8 @@ def starting(nodelevel,s1, s2, s3, s4):
 def prepare(nodelevel, serv_list):
     # Prepare launcher
     with open(LAUNCHER_PATH, 'w') as lau_file:
+        line='rm '+S.IP_PATH+'\n' # to ensure that python processes wait until network maintenance service is ready
+        lau_file.write(line)
         for serv in serv_list.keys():
             if serv_list[serv] == 1:
                 line='nohup python3 -u node_services/service_'+serv+'.py '+nodelevel+' &>/home/logs/output_'+serv+'.log </dev/null &\n'

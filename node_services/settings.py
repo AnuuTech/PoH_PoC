@@ -1,7 +1,7 @@
 # Define all global settings for python services
 
 # Global
-SW_VERSION='0.2.2'
+SW_VERSION='0.3.0'
 GENESIS_HASH='145120157110_AnnuTech_is_born_74312d646576' # For Genesis block
 E_TRIM=1655157600 # epoch trim (14.06.2022 00:00 in CET)
 VHOST='anuutech'
@@ -31,3 +31,19 @@ DATA_STORAGE_PATH='node_data/data_storage/'
 MIN_NUMBER_OF_DATA_REPLICA=2
 NODE_DOWNTIME_LIMIT=900 #in seconds
 POH_MAX_TX_AGE=2 # Txs not confirmed and older than 2 epochs are discarded
+
+# Fee contract
+ABI=[{"inputs": [{"internalType": "address","name": "dest","type": "address"},
+                 {"internalType": "string","name": "tx_hash","type": "string"},
+                 {"internalType": "string","name": "node_id","type": "string"}],
+      "name": "callTransfer","outputs": [],"stateMutability": "payable","type": "function"},
+     {"inputs": [{"internalType": "address payable","name": "payee","type": "address"}],
+      "name": "withdrawPayments","outputs": [],"stateMutability": "nonpayable","type": "function"},
+     {"inputs": [],"stateMutability": "payable","type": "constructor"},
+     {"inputs": [{"internalType": "address","name": "dest","type": "address"}],"name": "payments",
+      "outputs": [{"internalType": "uint256","name": "","type": "uint256"}],"stateMutability": "view","type": "function"}]
+
+FEE_POH=0.01 # in AKEY
+FEE_CHAT=0.001 
+FEE_DATASTORAGE=0.1
+

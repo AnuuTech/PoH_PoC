@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset='utf-8'>
+    <meta http-equiv='X-UA-Compatible' content='IE=edge'>
+    <title>AnuuTech Service Fees Overview</title>
+    <meta name='viewport' content='width=device-width, initial-scale=1'>
+    <script src="https://cdn.jsdelivr.net/npm/web3@latest/dist/web3.min.js"></script>
+  <style>a:link {color: #C0C0C0; background-color: transparent; text-decoration: none; }a:visited {color: #C0C0C0; background-color: transparent; text-decoration: none; }a:hover {color: #000000; background-color: transparent; text-decoration: underline; }.column {float: left; width: 33.33%;font-size: smaller;} .row:after {content: ""; display: table; clear: both;}body { padding: 2em; background-color: #2C3539;color:#C0C0C0;text-align:center;font-family: Verdana,'Trebuchet MS', sans-serif;}</style> 
+</head>
+  
+<body>
+  <p align=center> <H1>ANUUTECH SERVICE FEES OVERVIEW</H1> </p>
+      <br /><br />
+<CENTER><TABLE width=60% border=1>
+  <TR><TD colspan=3 align=center width=33%><H3>Collected fees (not distributed)</H3></TD></TR>
+<TR><TD width=33% align=center>CHAT fees</TD><TD width=33% align=center>PoH fees</TD>
+<TD width=34% align=center>DATA STORAGE fees</TD></TR>
+  <TR><TD width=33% align=center><span id="chat_fee_un">N/A</span> AKEY</TD><TD width=33% align=center><span id="poh_fee_un">N/A</span> AKEY</TD>
+<TD width=34% align=center><span id="data_fee_un">N/A</span> AKEY</TD></TR>
+  </TABLE></CENTER> 
+  <br /><br />
+  <CENTER><TABLE width=60% border=0>
+<TR><TD width=33% align=center><button onclick="retrieveChatFees();">Distribute CHAT fees</button></TD><TD width=33% align=center><button onclick="retrievePohFees();">Distribute POH fees</button></TD>
+<TD width=34% align=center><button onclick="retrieveDataFees();">Distribute DATASTORAGE fees</button></TD></TR>
+</TABLE></CENTER> 
+        <br /><br />
+<CENTER><TABLE width=60% border=1>
+  <TR><TD colspan=3 align=center width=33%><H3>Collected fees (distributed)</H3></TD></TR>
+<TR><TD width=33% align=center>CHAT fees</TD><TD width=33% align=center>PoH fees</TD>
+<TD width=34% align=center>DATA STORAGE fees</TD></TR>
+<TR><TD width=33% align=center><span id="chat_fee_dis">N/A</span> AKEY</TD><TD width=33% align=center><span id="poh_fee_dis">N/A</span> AKEY</TD>
+<TD width=34% align=center><span id="data_fee_dis">N/A</span> AKEY</TD></TR>
+</TABLE></CENTER> 
+
+
+    <br /><br />
+    <br /><br />
+    <p align=center><button onclick="updateAll();">Update all values from Blockchain</button></p>
+
+    <p align=center>Status: <span align=center id="status">Loading...</span></p>
+
+
+</body>
+  
+<script type="text/javascript">
+async function loadWeb3() {
+      if (window.ethereum) {
+          window.web3 = new Web3(window.ethereum);
+          window.ethereum.enable();
+      }
+}
+
+async function loadContract() {
+    return await new window.web3.eth.Contract([
+	{
+		"inputs": [
+			{
+				"internalType": "address",
+				"name": "dest",
+				"type": "address"
+			},
+			{
+				"internalType": "string",
+				"name": "tx_hash",
+				"type": "string"
+			},
+			{
+				"internalType": "string",
+				"name": "node_id",
+				"type": "string"
+			}
+		],
+		"name": "callTransfer",
+		"outputs": [],
+		"stateMutability": "payable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "address payable",
+				"name": "payee",
+				"type": "address"
+			}
+		],
+		"name": "withdrawPayments",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [],
+		"stateMutability": "payable",
+		"type": "constructor"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "address",
+				"name": "dest",
+				"type": "address"
+			}
+		],
+		"name": "payments",
+		"outputs": [
+			{
+				"internalType": "uint256",
+				"name": "",
+				"type": "uint256"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	}
+], '[Contract Adress]');
+}
+
+async function getCurrentAccount() {
+    const accounts = await window.web3.eth.getAccounts();
+    return accounts[0];
+}
+  
+async function getAmount() {
+    var amount = await window.contract.methods.payments(web3.utils.toChecksumAddress('[CHAT_fee_recipient_address]')).call();
+    var amountakey=web3.utils.fromWei(amount);
+    var statusEl = document.getElementById('chat_fee_un');
+    statusEl.innerHTML = amountakey;
+    amount = await window.contract.methods.payments(web3.utils.toChecksumAddress('[POH_fee_recipient_address]')).call();
+    amountakey=web3.utils.fromWei(amount);
+	statusEl = document.getElementById('poh_fee_un');
+    statusEl.innerHTML = amountakey;
+    amount = await window.contract.methods.payments(web3.utils.toChecksumAddress('[DATASTORAGE_fee_recipient_address]')).call();
+    amountakey=web3.utils.fromWei(amount);
+	statusEl = document.getElementById('data_fee_un');
+    statusEl.innerHTML = amountakey;
+}
+ 
+ async function getAmountDis() {
+    var amount = await web3.eth.getBalance(web3.utils.toChecksumAddress('[CHAT_fee_recipient_address]'));
+    var amountakey=web3.utils.fromWei(amount);
+    var statusEl = document.getElementById('chat_fee_dis');
+    statusEl.innerHTML = amountakey;
+    amount = await web3.eth.getBalance(web3.utils.toChecksumAddress('[POH_fee_recipient_address]'));
+    amountakey=web3.utils.fromWei(amount);
+	statusEl = document.getElementById('poh_fee_dis');
+    statusEl.innerHTML = amountakey;
+    amount = await web3.eth.getBalance(web3.utils.toChecksumAddress('[DATASTORAGE_fee_recipient_address]'));
+    amountakey=web3.utils.fromWei(amount);
+	statusEl = document.getElementById('data_fee_dis');
+    statusEl.innerHTML = amountakey;
+}
+ 
+  async function sendAmount() {
+    const account = await getCurrentAccount();
+	console.log("account:", account);
+	var address=document.getElementById("address").value;
+	var amount=document.getElementById("amount").value;
+	console.log("address:", address);
+	console.log("amount:", amount);
+	const outp= await window.contract.methods.callTransfer(address, web3.utils.toHex("test string"), web3.utils.toHex("")).send({ from: account, value: web3.utils.toWei(amount, 'ether')});
+  }
+  
+  async function retrieveChatFees() {
+	updateStatus('Sending transaction...');
+    const account = await getCurrentAccount();
+    const outp= await window.contract.methods.withdrawPayments(web3.utils.toChecksumAddress('[CHAT_fee_recipient_address]')).send({ from: account });
+	console.log(outp)
+	updateStatus('Done.');
+  }
+  
+   async function retrievePohFees() {
+	updateStatus('Sending transaction...');
+    const account = await getCurrentAccount();
+    const outp= await window.contract.methods.withdrawPayments(web3.utils.toChecksumAddress('[POH_fee_recipient_address]')).send({ from: account });
+	console.log(outp)
+	updateStatus('Done.');
+  }
+  
+    async function retrieveDataFees() {
+	 updateStatus('Sending transaction...');
+    const account = await getCurrentAccount();
+    const outp= await window.contract.methods.withdrawPayments(web3.utils.toChecksumAddress('[DATASTORAGE_fee_recipient_address]')).send({ from: account });
+	console.log(outp)
+	updateStatus('Done.');
+  }
+
+
+  function updateAll(){
+	updateStatus('Updating values...');
+	getAmount()
+	getAmountDis()
+	updateStatus('Values updated.');
+  }
+  
+function updateStatus(status) {
+    const statusEl = document.getElementById('status');
+    statusEl.innerHTML = status;
+    console.log(status); 
+}
+  
+async function load() {
+    await loadWeb3();
+    updateStatus('Web3 loaded.');
+    window.contract = await loadContract();
+    updateStatus('Contract loaded.');
+   
+}
+
+load();
+
+  </script>
+</html>

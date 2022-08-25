@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset='utf-8'>
+    <meta http-equiv='X-UA-Compatible' content='IE=edge'>
+    <title>AnuuTech Service Fees Overview</title>
+    <meta name='viewport' content='width=device-width, initial-scale=1'>
+    <script src="https://cdn.jsdelivr.net/npm/web3@latest/dist/web3.min.js"></script>
+  <style>a:link {color: #C0C0C0; background-color: transparent; text-decoration: none; }a:visited {color: #C0C0C0; background-color: transparent; text-decoration: none; }a:hover {color: #000000; background-color: transparent; text-decoration: underline; }.column {float: left; width: 33.33%;font-size: smaller;} .row:after {content: ""; display: table; clear: both;}body { padding: 2em; background-color: #2C3539;color:#C0C0C0;text-align:center;font-family: Verdana,'Trebuchet MS', sans-serif;}</style> 
+</head>
+  
+<body>
+ <H1 align=center>ANUUTECH AKEY testnet FAUCET</H1>
+      <br /><br />
+
+
+<br /><br />
+  	<p align=center><label for="address">Enter your address to  receive AKEY:</label>
+  	<input id="address" size='50' type="text" name="address" value="put address"></p>
+
+    <br />
+    <p align=center><button onclick="sendAkey();">Get 5 AKEY</button><button onclick="getBalances();">Update balances</button></p>
+
+  <p align=center>Remaining faucet balance: <span align=center id="fbalance">N/A</span></p>
+  <p align=center>Your balance: <span align=center id="ubalance">N/A</span></p>
+	<p align=center><span align=center id="info"></span></p>
+  <!-- <p align=center><button onclick="addNetworkRPC();">Add AnuuTech RPC to Wallet</button></p> -->
+
+  
+
+</body>
+  
+<script type="text/javascript">
+async function loadWeb3() {
+      if (window.ethereum) {
+          window.web3 = new Web3(window.ethereum);
+          window.ethereum.enable();
+      }
+}
+  
+ 
+ async function getBalances() {
+    var amount = await web3.eth.getBalance(web3.utils.toChecksumAddress('[faucet_address]'));
+    var amountakey=Math.floor(web3.utils.fromWei(amount));
+    var statusEl = document.getElementById('fbalance');
+    statusEl.innerHTML = amountakey;
+   	var address=document.getElementById("address").value;
+    amount = await web3.eth.getBalance(web3.utils.toChecksumAddress(address));
+    amountakey=web3.utils.fromWei(amount);
+	statusEl = document.getElementById('ubalance');
+    statusEl.innerHTML = amountakey;
+}
+ 
+  async function sendAkey() {
+	const nonce = await web3.eth.getTransactionCount('[faucet_address]','pending');
+	var address=document.getElementById("address").value;
+	var signedTx=await web3.eth.accounts.signTransaction({
+    to: address,
+    value: web3.utils.toWei('5','ether'),
+    gas: 21000,
+    gasPrice: 1000,
+    nonce: nonce,
+    chainId: [chainId]
+	}, 'chain');
+	
+	var statusEli = document.getElementById('info');
+	statusEli.innerHTML = 'Sending transaction...';
+	
+	await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+	getBalances()
+	
+	
+    statusEli.innerHTML = 'Transaction done, balances updated, you are richer now!';
+  }
+  
+ 
+async function load() {
+    await loadWeb3();   
+}
+  
+load();
+  </script>
+</html>

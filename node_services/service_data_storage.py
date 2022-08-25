@@ -24,6 +24,12 @@ class ServiceRunning(ReconnectingNodeConsumer):
  
     def _msg_process(self, msg, hdrs):
 
+        # First CHECK FEE is paid and correct
+        if msg.get('type') == 'SAVE_DATA' :
+            if not self._check_fee(msg, hdrs, S.FEE_DATASTORAGE, self.ii_helper('node_data/access.bin', '18')):
+                # Message is thus not processed
+                return True
+
         if (msg.get('type')=='SAVE_DATA' or msg.get('type')=='SAVE_DATA_REPLICATE'): #and hdrs.get('dest_uid') == self._uid):
             # Hash file content
             file_hash=binascii.hexlify((SHA256.new(json.dumps(msg['content']).encode())).digest()).decode()

@@ -23,6 +23,7 @@ mkdir node1
 cd node1
 mkdir data
 
+cd /home
 own_addr=$((python3 ii_helper.py node_data/access.bin 13) 2>&1)
 chainID=$((python3 ii_helper.py node_data/access.bin 14) 2>&1)
 
@@ -33,9 +34,9 @@ cat >>/home/QBFT/qbftConfigFile.json <<EOF
       "chainId": $chainID,
      "londonBlock": 0,
       "qbft": {
-        "blockperiodseconds": 5,
+        "blockperiodseconds": 2,
         "epochlength": 21600,
-        "requesttimeoutseconds": 10
+        "requesttimeoutseconds": 4
       }
     },
     "nonce": "0x0",
@@ -93,7 +94,7 @@ nohup besu --data-path=data --genesis-file=../genesis.json --bootnodes=enode://$
 
 ## Additional commands
 # To add a validator (should be run by a majority of validators):
-curl -X POST --data '{"jsonrpc":"2.0","method":"qbft_proposeValidatorVote","params":["0x5b291303c1021f20cc9aa55826aa4c9ef948112c",true], "id":1}' http://127.0.0.1:$rh_port
+curl -X POST --data '{"jsonrpc":"2.0","method":"qbft_proposeValidatorVote","params":["0x4a291303c1021f20cc9aa55826aa4c9ef958112b",true], "id":1}' http://127.0.0.1:$rh_port
 # To check current validator votes:
 curl -X POST --data '{"jsonrpc":"2.0","method":"qbft_getPendingVotes","params":[], "id":1}' http://127.0.0.1:$rh_port
 # To check current validator lists:

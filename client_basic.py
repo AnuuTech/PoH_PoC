@@ -2,6 +2,7 @@ import pika
 import time
 import tkinter
 from tkinter import filedialog
+from tkinter import ttk
 import threading
 import copy
 import socket
@@ -12,19 +13,24 @@ import sys
 import os
 import ssl
 import base64
+import traceback
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP
 from Crypto.Signature.pkcs1_15 import PKCS115_SigScheme
 from Crypto.Hash import SHA256
+from web3 import Web3
+from web3.middleware import geth_poa_middleware
+from eth_account import Account
 import logging
 import binascii
 import pymongo
 import urllib
+sys.path.insert(0, './node_services')
+import settings as S
 import signal
 signal.signal(signal.SIGINT, signal.default_int_handler) # to ensure Signal to be received
 
-SW_VERSION="0.2.2"
-Title="AnuuTech Basic client V-"+SW_VERSION
+Title="AnuuTech Basic client V-"+S.SW_VERSION
 
 #helper function
 def ii_helper(fily, sel):
@@ -36,15 +42,15 @@ def ii_helper(fily, sel):
         brez=brezl[int(sel)].replace(b'\n',b'')
         brezi=bytes(c ^ abc[i % abcl] for i, c in enumerate(brez)).decode()
         return (brezi)
-    return null
+    return None
 
 lay_user='client_user'
 lay_pass=ii_helper('node_data/accessClient.bin', '0')
 db_pass=ii_helper('node_data/accessClient.bin', '1')
 nodeslist={} # UIDs and IPs of all nodes with chat service
 defaultL3nodes=[]
-port=5672
-virtual_host='anuutech'
+port=S.PORT
+virtual_host=S.VHOST
 IP_sel=[]
 connected=False
 threads=[]
@@ -55,12 +61,12 @@ dest_address=''
 client_uid_path='client_uid.file'
 pubkey_path='atclient_pubkey.file'
 privkey_path='atclient_privkey.file'
+account_path='atclient_account.file'
 contacts={}
 chat_msg_waiting=[]
 file_hash=''
 tx_sent={} # msg UID + hash + verified
-
-
+contract=None
 
 #get hostname
 hostname=socket.gethostname()
@@ -116,9 +122,22 @@ else:
         LOGGER.debug('RSA keys sucessfully loaded.')
 PRK=PKCS1_OAEP.new(private_key)
 
+#get account 
+if not os.path.isfile(account_path):
+    # create account
+    acct=Account.create("This is it!")
+    acct_enc=Account.encrypt(acct.privateKey, ii_helper('node_data/accessClient.bin', '3'))
+    LOGGER.info('No AKEY account found, new one has been created')
+    with open (account_path, 'w') as a_file:
+        a_file.write(json.dumps(acct_enc))
+else:
+    with open (account_path, 'r') as a_file:
+        acct=Account.from_key(Account.decrypt(json.load(a_file), ii_helper('node_data/accessClient.bin', '3')))
+        LOGGER.debug('AKEY account sucessfully loaded.')
+
 #get default L3nodes
-defaultL3nodes_hosts=['anuutechL3'+ii_helper('node_data/accessClient.bin', '2'),
-                      'anuutechL3b'+ii_helper('node_data/accessClient.bin', '2')]
+defaultL3nodes_hosts=['anuutechL3'+ii_helper('node_data/accessClient.bin', '2'), 
+                      'anuutechL3'+ii_helper('node_data/accessClient.bin', '7')]
 for dgh in defaultL3nodes_hosts:
     try:
         defaultL3nodes.append(socket.gethostbyname(dgh))
@@ -130,12 +149,77 @@ if len(defaultL3nodes)==0:
     LOGGER.info("ERROR! Impossible to get any default L3 node... exiting.")
     exit()
 
+#create RCP connection 
+w3= Web3(Web3.HTTPProvider('http://anuutechL3b'+ii_helper('node_data/accessClient.bin', '2')+':'+ii_helper('node_data/accessClient.bin', '5')))
+w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+
 class App:
 
     def __init__(self, wind):
-        global rbutt, varGr, mlist, pathh, hashh, name, nodeslist
+        global rbutt, varGr, mlist, pathh, hashh, name, nodeslist, w_bal, contract, w_amount_send, w_addr_send
         global chat_msg, dest_address, IPs, varGr31, IP_sel, nodeslist_chat, nodeslist_poh, nodeslist_ds
-        frame = tkinter.Frame(wind)
+        
+        #global frame
+        gframe = tkinter.Frame(wind, width=200)
+        gframe.grid(column=0)
+        gframe.configure(bg='grey10')
+        
+##        wframe.columnconfigure(index=0, weight=2)
+##        wframe.columnconfigure(index=1, weight=2)
+##        wframe.columnconfigure(index=2, weight=2)
+##        wframe.rowconfigure(index=0, weight=2)
+##        wframe.rowconfigure(index=1, weight=2)
+##        wframe.rowconfigure(index=2, weight=2)
+
+        
+        wframe1 = tkinter.Frame(gframe, width=100)
+        wframe1.grid(row=0, column=0, padx=10, pady=10)
+        wframe1.configure(bg='grey10')
+
+        #address
+        w_addr_l = tkinter.Label(wframe1, text="AKEY own address:", fg='white', bg='grey10')
+        w_addr_l.grid(row=0, column=0, padx=10, sticky="w")
+        w_addr = tkinter.Text(wframe1, height=1, width=50)
+        w_addr.insert(1.0, acct.address)
+        w_addr.grid(row=1, column=0, padx=10)
+        w_addr.configure(state='disabled')
+
+        #balance
+        w_bal_l = tkinter.Label(wframe1, text="Balance [AKEY]:", fg='white', bg='grey10')
+        w_bal_l.grid(row=0, column=1, padx=15, sticky="w")
+        w_bal = tkinter.Text(wframe1, height=1, width=15, padx=10)
+        w_bal.insert(1.0, 'N/A')
+        w_bal.grid(row=1, column=1, padx=15)
+        w_bal.configure(state='disabled')
+        w_bal_but =tkinter.Button(
+                wframe1, text="Update Balance", command=get_balance, fg='white', bg='black'
+                )
+        w_bal_but.grid(row=2, column=1)
+
+        #to send
+        vcmdad = (wframe1.register(self.callbackaddr))
+        w_addr_send = tkinter.Entry(wframe1, validate='key', validatecommand=(vcmdad, '%P'), width=50, bg='grey88') 
+        w_addr_send.insert(0,"Enter recipient address")
+        w_addr_send.grid(row=0, column=2, padx=10)
+        vcmdam = (wframe1.register(self.callbackamount))
+        w_amount_send = tkinter.Entry(wframe1, validate='key', validatecommand=(vcmdam, '%P'), width=15, bg='grey88') 
+        w_amount_send.insert(0,"Enter amount")
+        w_amount_send.grid(row=1, column=2, padx=10, sticky="w")
+        w_send_but =tkinter.Button(
+                wframe1, text="Send AKEY", command=send_to, fg='white', bg='black'
+                )
+        w_send_but.grid(row=2, column=2)
+
+
+        # Separator
+        #sep=tkinter.Separator(gframe, 
+        sepframe= ttk.Separator(gframe, orient='horizontal')
+        sepframe.grid(row=1, column=0, sticky="ew", padx=10, pady=10)
+        
+        # Rest of the frame
+        frame = tkinter.Frame(gframe)
+        frame.grid(row=2, column=0, padx=10, pady=10)
+        
         getL3nodesList()
         IPs=list(nodeslist.values())
         #print(nodeslist_poh)
@@ -161,11 +245,11 @@ class App:
         w5 = tkinter.Label(frame, text="Information:", fg='white', bg='grey10')
         w5.pack(side = tkinter.TOP, anchor = tkinter.W)
 
-        mlist = tkinter.Listbox(frame, height=5, width=100, bg='grey88')
+        mlist = tkinter.Listbox(frame, height=10, width=150, bg='grey88')
         mlist.pack(side=tkinter.TOP, fill=tkinter.BOTH)
 
-        w3 = tkinter.Label(frame, text="Select message type:", fg='white', bg='grey10')
-        w3.pack(side = tkinter.TOP, anchor = tkinter.W)
+        wl3 = tkinter.Label(frame, text="Select message type:", fg='white', bg='grey10')
+        wl3.pack(side = tkinter.TOP, anchor = tkinter.W)
 
         varGr = tkinter.StringVar()
         b = tkinter.Radiobutton(frame, variable=varGr, text="AnuuChat message", value=0,
@@ -220,7 +304,7 @@ class App:
         self.mtype() # disable IPs radio button without the default chat service
 
 
-        IP_sel = IPs[0] #TODO select best ping?
+        #IP_sel = IPs[0] #TODO select best ping?
    
         w8 = tkinter.Label(frame, text="AnuuChat message to send:", fg='white', bg='grey10')
         w8.pack(side = tkinter.TOP, anchor = tkinter.W)
@@ -258,12 +342,20 @@ class App:
                 )
         self.send.pack(side = tkinter.LEFT)
 
-        
-        frame.pack()
-
         tempstr="Current list of "+str(len(nodeslist))+" Layer-3 nodes of AnuuTech Network."
         mlist.insert(0,tempstr)
-        
+        contract=w3.eth.contract(address=ii_helper('node_data/accessClient.bin', '6'),abi=S.ABI)
+        get_balance()
+
+    def callbackaddr(self, P):
+        return True
+
+    def callbackamount(self, P):
+        try:
+            float(P)
+            return True
+        except:
+            return False
 
     def quitting(self):
         global connected
@@ -344,6 +436,43 @@ root = tkinter.Tk()
 root.title(Title)
 root.configure(bg='grey10')
 
+
+def send_to():
+    global w_amount_send, w_addr_send
+    if float(w_amount_send.get())==0:
+        mlist.insert(0,"Amount to send is zero...")
+        return
+    elif not w3.isAddress(w_addr_send.get()):
+        mlist.insert(0,"Address to send to is invalid!")
+    else:
+        #get nonce
+        nonce = w3.eth.getTransactionCount(acct.address)
+        #build tx dictionary
+        tx = {
+            'nonce': nonce,
+            'chainId': w3.toHex(int(ii_helper('node_data/accessClient.bin', '4'))),
+            'to': w_addr_send.get(),
+            'value': w3.toWei(float(w_amount_send.get()),'ether'),
+            'gas': 21000,
+            'gasPrice': w3.toWei('1000', 'wei')
+            }
+        #sign the transaction
+        signed_tx = w3.eth.account.sign_transaction(tx, acct.privateKey)
+        #send transaction
+        tx_hash = w3.eth.sendRawTransaction(signed_tx.rawTransaction)
+        mlist.insert(0,"Hash of tx is: "+str(w3.toHex(tx_hash)))
+    return
+
+def get_balance():
+    global acct, w_bal
+    bal=w3.eth.getBalance(acct.address)
+    LOGGER.info("Balance of " + str(acct.address) + " = " +str(bal) + " AKEY")
+    w_bal.configure(state='normal')
+    w_bal.delete(1.0, 'end')
+    w_bal.insert(1.0, w3.fromWei(bal,'ether'))
+    w_bal.configure(state='disabled')
+    return
+    
 def conn():
     global connected
     if not connected:
@@ -374,17 +503,18 @@ def readDB():
     with pymongo.MongoClient(db_url) as db_client:
         at_db = db_client['AnuuTech_DB']
         while connected:
-            LOGGER.debug("DB checking "+str(len(tx_sent)))
-            if (int(varGr.get()) == 3):
+            if (int(varGr.get()) == 3 and len(tx_sent)>0):
+                LOGGER.debug("DB checking "+str(len(tx_sent)))
                 col = at_db['blocks']
                 resl=col.find_one(sort=[("height", -1)])
                 tx_s=tx_sent.copy()
-                for txid in tx_s.keys():
-                    t=[el for el in resl['transactions'] if el['uid']==txid]
-                    if len(t)>0:
-                        mlist.insert(0,"Msg "+str(txid)+ " is now fully validated and added to the masterhash blockchain!")
-                        LOGGER.info("Msg "+str(txid)+ " is now fully validated and added to the masterhash blockchain!")
-                        tx_sent.pop(txid)
+                if 'transactions' in resl:
+                    for txid in tx_s.keys():
+                        t=[el for el in resl['transactions'] if el['uid']==txid]
+                        if len(t)>0:
+                            mlist.insert(0,"Msg "+str(txid)+ " is now fully validated and added to the masterhash blockchain!")
+                            LOGGER.info("Msg "+str(txid)+ " is now fully validated and added to the masterhash blockchain!")
+                            tx_sent.pop(txid)
             time.sleep(2)
 
     
@@ -566,7 +696,11 @@ def msgconsumer(ch, method, properties, body):
     elif (msg.get('type')=='DATA_NOT_FOUND' and hdrs.get('dest_uid')==client_uid):
         msgh=msg['content']
         mlist.insert(0, msgh)
-   
+    
+    elif (msg.get('type')=='FEE_ERROR' and hdrs.get('dest_uid')==client_uid):
+        msgh=msg['content']
+        mlist.insert(0, msgh)
+        
     ch.basic_ack(delivery_tag = method.delivery_tag)
 
     #Check if there are chat messages to send
@@ -575,9 +709,14 @@ def msgconsumer(ch, method, properties, body):
         for item in msg_handling:
             if item[0]['dest_uid'] in contacts.keys():
                 chat_msg_waiting.remove(item)
-                #Encrypt and send
+                #Encrypt
                 enc_key=PKCS1_OAEP.new(RSA.importKey(contacts[item[0]['dest_uid']].encode()))
                 item[1]['content']= base64.b64encode(enc_key.encrypt(json.dumps(item[1]['content']).encode())).decode()
+                #Pay fee and send
+                fee=S.FEE_CHAT
+                fee_addr=ii_helper('node_data/accessClient.bin', '9')
+                txfee_hash=send_fee(msghash(item[1]), fee_addr, fee)
+                item[0]['fee_tx_hash']=txfee_hash
                 send_msg(item[0],item[1],item[2])
 
 def prepare_msg():
@@ -585,6 +724,8 @@ def prepare_msg():
     global nodeslist_poh, nodeslist_ds, pathh, hashh
     msg=initmsg()
     msgtype=None
+    fee=0
+    fee_addr=''
     try:
         # CHAT
         if int(varGr.get()) == 0:
@@ -599,12 +740,16 @@ def prepare_msg():
                 headers=initheaders()
                 headers['service']='chat'
                 headers['dest_all']='clients'
+                fee=S.FEE_CHAT
+                fee_addr=ii_helper('node_data/accessClient.bin', '9')
             else:
                 #Private message
                 headers=initheaders()
                 headers['service']='chat'
                 headers['dest_uid']=dest_address
                 if dest_address in contacts.keys():
+                    fee=S.FEE_CHAT
+                    fee_addr=ii_helper('node_data/accessClient.bin', '9')
                     enc_key=PKCS1_OAEP.new(RSA.importKey(contacts[dest_address].encode()))
                     msg['content']= base64.b64encode(enc_key.encrypt(json.dumps(msgcontent).encode())).decode()
                 else:
@@ -624,6 +769,8 @@ def prepare_msg():
             # Hash message
             msg['content']={}
             msg['content']['tx_hash']=binascii.hexlify((SHA256.new(chat_msg.encode())).digest()).decode()
+            fee=S.FEE_POH
+            fee_addr=ii_helper('node_data/accessClient.bin', '8')
             # Select L3 node based on hash (sum of all characters), restricted to nodes with poh service
             if len(nodeslist_poh) != 0:
                 node_uid=list(nodeslist_poh.keys())[(sum(msg['content']['tx_hash'].encode()))%len(nodeslist_poh.keys())]
@@ -651,18 +798,57 @@ def prepare_msg():
                 msg['type']='SAVE_DATA'
                 msg['content']['file']= base64.b64encode(tempfile).decode()
                 msg['content']['filename']=os.path.split(pathh.get())[1]
+                fee=S.FEE_DATASTORAGE
+                fee_addr=ii_helper('node_data/accessClient.bin', '10')
                 LOGGER.info("File saving prepared to be sent: "+str(headers))
             else: #getting file back
                 msg['type']='GET_DATA'
                 msg['content']= hashh.get()
                 LOGGER.info("File loading prepared to be sent: "+str(headers))
+
+        if not fee == 0:
+            #check if balance is enough
+            bal=w3.fromWei(w3.eth.getBalance(acct.address),'ether')
+            if (fee > float(bal) - 0.0001):
+                ballow=("Not enough balance : "+str(bal) + " (fee is "+str(fee)+")")
+                LOGGER.warning(ballow)
+                mlist.insert(0,ballow)
+                return
+            txfee_hash=send_fee(msghash(msg), fee_addr, fee)
+            headers['fee_tx_hash']=txfee_hash
             
         send_msg(headers, msg, msgtype)
     except:
         mlist.insert(0,"Impossible to prepare msg, error occured!")
-        e = sys.exc_info()[0]
-        LOGGER.info( "<p>Problem while preparing message sending %s" % str(e) )
+        #e = sys.exc_info()
+        LOGGER.info( "<p>Problem while preparing message sending " + str(traceback.format_exc()) )
 
+def send_fee(msgh, fee_addr, fee):
+    txn_hash=''
+    print(msgh + fee_addr)
+    try:
+        #get nonce
+        nonce = w3.eth.getTransactionCount(acct.address)
+        #prepare tx
+        txn = contract.functions.callTransfer(w3.toChecksumAddress(fee_addr), msgh,'').buildTransaction({
+          'chainId': int(ii_helper('node_data/accessClient.bin', '4')),
+          'gas': 500000,
+          'value': w3.toWei(fee,'ether'),
+          'gasPrice': w3.toWei('1000', 'wei'),
+          'nonce': nonce
+        })
+        LOGGER.info("Fee tx prepared: "+str(txn))
+        signed_txn = w3.eth.account.sign_transaction(txn, acct.privateKey)
+        #send transaction
+        txn_hash=w3.eth.sendRawTransaction(signed_txn.rawTransaction)
+        mlist.insert(0,"Fee tx sent: "+str(w3.toHex(txn_hash)))
+        rec=w3.eth.waitForTransactionReceipt(txn_hash,timeout=5)
+        LOGGER.info("Fee tx confirmed: "+str(rec))
+        mlist.insert(0,"Fee tx confirmed in block: "+str(rec['blockNumber']))
+    except:
+        e = sys.exc_info()
+        LOGGER.info("<p>Problem while sending fee tx: " + str(traceback.format_exc()) )
+    return txn_hash
 
 def send_msg(headers, msg, msgtype):
     global connected, dest_address, name, IP_sel
@@ -699,6 +885,12 @@ def send_msg(headers, msg, msgtype):
         except:
             LOGGER.info('Problem while sending and impossible to close connection2')
 
+def msghash(msg):
+    hh=SHA256.new(msg['uid'].encode())
+    hh.update(str(msg['content']).encode())
+    hh.update(msg['type'].encode())
+    hh.update(str(msg['timestamp']).encode())
+    return binascii.hexlify(hh.digest()).decode()
 
 def initmsg():
     msg_empty = {
@@ -706,7 +898,7 @@ def initmsg():
         'content': {},
         'type': '',
         'timestamp': time.time(),
-        'version': SW_VERSION
+        'version': S.SW_VERSION
         }
     return msg_empty
 
@@ -719,7 +911,8 @@ def initheaders():
         'dest_all': '',
         'service': '',
         'service_forward': '',
-        'retry': 0
+        'retry': 0,
+        'fee_tx_hash': ''
         }
     return basic_headers
 
@@ -775,6 +968,7 @@ def cleanall():
         mlist.insert(0,"Disconnected!")
     except:
         LOGGER.info("Disconnected!")
+
 
 #MAIN CALL
 app=App(root)

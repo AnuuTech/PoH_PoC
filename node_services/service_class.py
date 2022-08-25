@@ -13,10 +13,14 @@ import json
 import string
 import random
 from Crypto.PublicKey import RSA
+from Crypto.Hash import SHA256
+import binascii
 from threading import Timer, Thread
 from collections import Counter
 import traceback
 from filelock import Timeout, FileLock
+from web3 import Web3
+from web3.middleware import geth_poa_middleware
 import signal
 signal.signal(signal.SIGINT, signal.default_int_handler) # to ensure Signal to be received
 
@@ -333,6 +337,8 @@ class ReconnectingNodeConsumer(object):
         self._first_init = True
         self._sending = False
         self._threadsend = None
+        self._w3 = None
+        self._feecontract = None
 
         self._own_IP=''
         self._nodelevel = str(xargs)
@@ -489,6 +495,12 @@ class ReconnectingNodeConsumer(object):
                 with open(self._service_stats_path, 'r') as stat_file:
                     self._service_stats=json.load(stat_file)
 
+        # Prepare RPC connection
+        self._w3= Web3(Web3.HTTPProvider('http://anuutechL3b'+self.ii_helper('node_data/access.bin', '8')+':'+self.ii_helper('node_data/access.bin', '15')))
+        self._w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+        # Get Fee Contract
+        self._feecontract=self._w3.eth.contract(address=self.ii_helper('node_data/access.bin', '14'), abi=S.ABI)
+
         logmsg=("INITIALISATION of "+self._uid+" done, IP: " + self._own_IP+
                 " number of layer nodes: "+str(len(self._nodeslist)))
         if self._nodelevel != 'L1':
@@ -581,6 +593,67 @@ class ReconnectingNodeConsumer(object):
     def _msg_process(self, msg, hdrs):
         self.LOGGER.info("Entered default method")
         return True
+
+    def _check_fee(self, msg, hdrs, fee, fee_address):
+        fee_ok = True
+        error_text = ''
+        # check if tx hash is provided
+        if hdrs.get('fee_tx_hash') is None or hdrs.get('fee_tx_hash') == '':
+            fee_ok=False
+            error_text='Fee tx hash not provided!'
+        else:
+            try:
+                # get tx
+                tx=self._w3.eth.getTransaction(hdrs['fee_tx_hash'])
+                tx_input=self._feecontract.decode_function_input(tx.input)
+                # get msg hash
+                mh=self._msg_hash(msg)
+                # check if msg hash corresponds
+                self.LOGGER.info("fee: "+str(self._w3.fromWei(tx['value'],'ether')) + " and address: "+
+                                     tx_input[1]['dest'].lower())
+                if mh !=  tx_input[1]['tx_hash']:
+                    fee_ok=False
+                    error_text="Msg hash is wrong, expected: "+mh
+                if fee > float(self._w3.fromWei(tx['value'],'ether')):
+                    fee_ok=False
+                    error_text=error_text+" Fee is too low, min is: " + str(fee)
+                if fee_address.lower() != tx_input[1]['dest'].lower():
+                    fee_ok=False
+                    error_text=error_text+" Fee Address is wrong, expected: " + fee_address.lower()
+                if tx['blockHash']== None:
+                    fee_ok=False
+                    error_text=error_text+'tx is not confirmed!'
+            except:
+                fee_ok=False
+                error_text='Fee tx hash is wrong or fee tx is malformed'
+                e = sys.exc_info()
+                logmsg=str("<p>Problem while checking fee: %s</p>" % str(traceback.format_exc()) )
+                self.LOGGER.error(logmsg)
+                
+        if fee_ok:
+            return True
+        
+        # Issue with fee payment, inform back user
+        self.LOGGER.warning("expected fee: "+ str(fee) + " and expected address: "+fee_address.lower())
+        hdrs_cli=hdrs.copy()
+        hdrs_cli['dest_uid']=hdrs.get('sender_uid')
+        hdrs_cli['dest_IP']=hdrs.get('sender_node_IP')
+        hdrs_cli['sender_uid']=self._uid
+        hdrs_cli['dest_all']=''
+        msgback=self._initmsg()
+        msgback['uid']=msg['uid'] #keeps the same id so that the client knows which tx it was
+        msgback['type']='FEE_ERROR'
+        msgback['content']=error_text
+        self.LOGGER.info("Sending back, wrong fee msg "+str(msgback['uid'])+" " +str(hdrs_cli))
+        self._msgs_to_send.append([msgback, hdrs_cli, hdrs_cli['dest_IP'], 'L3'])
+        return False
+        
+    def _msg_hash(self, msg):
+        hh=SHA256.new(msg['uid'].encode())
+        hh.update(str(msg['content']).encode())
+        hh.update(msg['type'].encode())
+        hh.update(str(msg['timestamp']).encode())
+        return binascii.hexlify(hh.digest()).decode()
         
     def _initmsg(self):
         msg_empty = {
@@ -601,7 +674,8 @@ class ReconnectingNodeConsumer(object):
             'dest_all': '',
             'service': self._service,
             'service_forward': '',
-            'retry': 0
+            'retry': 0,
+            'fee_tx_hash': ''
             }
         return basic_headers
                 
@@ -726,7 +800,7 @@ class ReconnectingNodeConsumer(object):
     def _get_default_IPs(self, nodelevel):     
         defaultnodesIP=[]
         defaultnodes_hosts=['anuutech'+nodelevel+self.ii_helper('node_data/access.bin', '8'),
-                  'anuutech'+nodelevel+'b'+self.ii_helper('node_data/access.bin', '8')]
+                  'anuutech'+nodelevel+self.ii_helper('node_data/access.bin', '13')]
         for dlh in defaultnodes_hosts:
             try:
                 defaultnodesIP.append(socket.gethostbyname(dlh))
