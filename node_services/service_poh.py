@@ -59,7 +59,9 @@ class ServiceRunning(ReconnectingNodeConsumer):
         if (msg.get('type')=='POH_L3_R1' and (hdrs.get('dest_uid') == self._uid or
                                                hdrs.get('dest_IP') == self._own_IP)):
             # First CHECK FEE is paid and correct
-            if not self._check_fee(msg, hdrs, S.FEE_POH, self.ii_helper('node_data/access.bin', '16')):
+            if msg['content']['tx_hash'].startswith(self.ii_helper('node_data/access.bin', '19')): # private blockchain hash
+                msg['content']['tx_hash']=S.PRIV_BC_PRECODE+msg['content']['tx_hash'][10:]
+            elif not self._check_fee(msg, hdrs, S.FEE_POH, self.ii_helper('node_data/access.bin', '16')):
                 # Message is thus not processed
                 return True
             tt=time.time()
@@ -245,7 +247,7 @@ class ServiceRunning(ReconnectingNodeConsumer):
                 for nk in self._nodeslist.keys():
                     if hdrs['dest_uid'] == nk and 'IP_address' in self._nodeslist[nk]:
                         IP_tosend=self._nodeslist[nk]['IP_address']
-            if IP_tosend == '':
+            if IP_tosend == '': # TODO implement a workaround when this happens
                 self.LOGGER.warning("Impossible to forward message to "+str(hdrs['dest_uid'])+". Msg " +str(msg.get('uid'))+ " will be lost!")
             else:
                 self.LOGGER.info("PoH message forwarded to " +str(IP_tosend))
